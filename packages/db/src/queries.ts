@@ -1,7 +1,23 @@
 import type BetterSqlite3 from 'better-sqlite3';
 import type { HarnessStat, OverviewData, SearchHit, SearchQuery, SessionDetail, SessionRow, SourceRow, ToolStat } from '@tycho/core';
 
+/** With no word from the harness, a session counts as running while it was written to this recently. */
 const LIVE_WINDOW_MS = 2 * 60 * 1000;
+/** A session the harness reports as mid-turn stays running through quiet stretches (long tools, thinking) up to this long. */
+const RUNNING_WINDOW_MS = 10 * 60 * 1000;
+
+/**
+ * Whether session `x` is running. Trust the harness when it said so: 'running' holds while reasonably
+ * fresh; 'idle' holds until something newer than that report is written. Otherwise use recency alone.
+ */
+const IS_LIVE = `(CASE
+  WHEN x.activity = 'running' THEN x.updated_at >= @runningSince
+  WHEN x.activity = 'idle' AND x.activity_at >= strftime('%Y-%m-%dT%H:%M:%fZ', x.updated_at, '-5 seconds') THEN 0
+  ELSE x.updated_at >= @liveSince END)`;
+const liveParams = (now: Date) => ({
+  liveSince: new Date(now.getTime() - LIVE_WINDOW_MS).toISOString(),
+  runningSince: new Date(now.getTime() - RUNNING_WINDOW_MS).toISOString(),
+});
 
 function dayStart(daysAgo: number, now: Date): string {
   const d = new Date(now);
@@ -12,7 +28,6 @@ function dayStart(daysAgo: number, now: Date): string {
 
 export function overview(db: BetterSqlite3.Database, now = new Date()): OverviewData {
   const costSince = db.prepare('SELECT COALESCE(SUM(cost_usd),0) c FROM usage_events WHERE timestamp >= ?').pluck();
-  const liveSince = new Date(now.getTime() - LIVE_WINDOW_MS).toISOString();
   const since30 = dayStart(29, now);
   const cache = db
     .prepare('SELECT SUM(cache_read_tokens) r, SUM(input_tokens + cache_read_tokens + cache_write_tokens) t FROM usage_events WHERE timestamp >= ?')
@@ -21,8 +36,15 @@ export function overview(db: BetterSqlite3.Database, now = new Date()): Overview
     costToday: costSince.get(dayStart(0, now)) as number,
     cost7d: costSince.get(dayStart(6, now)) as number,
     cost30d: costSince.get(since30) as number,
-    liveCount: db.prepare('SELECT COUNT(*) FROM sessions WHERE updated_at >= ?').pluck().get(liveSince) as number,
-    sessionCount: db.prepare('SELECT COUNT(*) FROM sessions').pluck().get() as number,
+    // Same definition as a session row's `live`: top-level sessions, with their subagents rolled in.
+    liveCount: db
+      .prepare(
+        `SELECT COUNT(*) FROM sessions s WHERE s.parent_session_id IS NULL
+           AND EXISTS (SELECT 1 FROM sessions x WHERE (x.id = s.id OR x.parent_session_id = s.id) AND ${IS_LIVE})`,
+      )
+      .pluck()
+      .get(liveParams(now)) as number,
+    sessionCount: db.prepare('SELECT COUNT(*) FROM sessions WHERE parent_session_id IS NULL').pluck().get() as number,
     daily: db
       .prepare(
         `SELECT substr(u.timestamp,1,10) day, s.harness harness, COALESCE(SUM(u.cost_usd),0) costUsd
@@ -60,7 +82,7 @@ const SESSION_SELECT = `
                  WHEN COUNT(*)>0 THEN 'reported' END FROM usage_events WHERE session_id IN ${FAM}) costSource,
     EXISTS (SELECT 1 FROM usage_events WHERE session_id IN ${FAM} AND cost_usd IS NULL) unpriced,
     (SELECT COUNT(*) FROM sessions WHERE parent_session_id = s.id) subagents,
-    (SELECT MAX(updated_at) FROM sessions WHERE id IN ${FAM}) >= @liveSince live
+    EXISTS (SELECT 1 FROM sessions x WHERE (x.id = s.id OR x.parent_session_id = s.id) AND ${IS_LIVE}) live
   FROM sessions s`;
 
 type RawRow = Omit<SessionRow, 'live' | 'unpriced'> & { live: number; unpriced: number };
@@ -71,26 +93,24 @@ export function sessions(
   q: { harness?: string; limit?: number; offset?: number },
   now = new Date(),
 ): SessionRow[] {
-  const liveSince = new Date(now.getTime() - LIVE_WINDOW_MS).toISOString();
   const rows = db
     .prepare(
       `${SESSION_SELECT}
        WHERE s.parent_session_id IS NULL AND (@harness IS NULL OR s.harness = @harness)
        ORDER BY updatedAt DESC LIMIT @limit OFFSET @offset`,
     )
-    .all({ liveSince, harness: q.harness ?? null, limit: q.limit ?? 200, offset: q.offset ?? 0 }) as RawRow[];
+    .all({ ...liveParams(now), harness: q.harness ?? null, limit: q.limit ?? 200, offset: q.offset ?? 0 }) as RawRow[];
   return rows.map(toRow);
 }
 
 const MESSAGE_CAP = 2000;
 
 export function session(db: BetterSqlite3.Database, id: string, now = new Date()): SessionDetail | null {
-  const liveSince = new Date(now.getTime() - LIVE_WINDOW_MS).toISOString();
   const row = db
     .prepare(
       `${SESSION_SELECT} WHERE s.id = @id`,
     )
-    .get({ id, liveSince }) as RawRow | undefined;
+    .get({ id, ...liveParams(now) }) as RawRow | undefined;
   if (!row) return null;
   const fam = `(SELECT id FROM sessions WHERE id = @id OR parent_session_id = @id)`;
   const messages = db

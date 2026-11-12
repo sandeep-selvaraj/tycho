@@ -4,7 +4,7 @@ import { openDb, queries } from './index';
 describe('db', () => {
   it('migrates idempotently and answers empty queries', () => {
     const db = openDb(':memory:');
-    expect(db.pragma('user_version', { simple: true })).toBe(3);
+    expect(db.pragma('user_version', { simple: true })).toBe(4);
     expect(queries.overview(db).cost30d).toBe(0);
     expect(queries.sessions(db, {})).toEqual([]);
   });
@@ -23,6 +23,28 @@ describe('db', () => {
     const ov = queries.overview(db, now);
     expect(ov.costToday).toBe(2);
     expect(ov.cacheReadShare).toBeCloseTo(1800 / (200 + 1800 + 20));
+  });
+
+  it('decides "running" from what the harness reported, falling back to recency', () => {
+    const db = openDb(':memory:');
+    const now = new Date('2026-11-12T12:00:00.000Z');
+    const ago = (s: number) => new Date(now.getTime() - s * 1000).toISOString();
+    const ins = db.prepare(`INSERT INTO sessions (id,harness,native_id,started_at,updated_at,source_ref,activity,activity_at,parent_session_id) VALUES (?, 'h', ?, ?, ?, 'f', ?, ?, ?)`);
+    const add = (id: string, updated: string, activity: string | null, at: string | null = updated, parent: string | null = null) => ins.run(id, id, updated, updated, activity, at, parent);
+    add('just-finished', ago(5), 'idle'); // was "running" for two more minutes before
+    add('long-tool', ago(300), 'running'); // quiet for five minutes mid-turn
+    add('abandoned', ago(3600), 'running'); // harness died mid-turn
+    add('no-signal-fresh', ago(30), null);
+    add('no-signal-old', ago(600), null);
+    add('written-after-idle', ago(10), 'idle', ago(90)); // new records since the harness said idle
+    add('parent', ago(900), 'idle');
+    add('child', ago(20), 'running', ago(20), 'parent');
+    const live = Object.fromEntries(queries.sessions(db, {}, now).map((r) => [r.id, r.live]));
+    expect(live).toEqual({
+      'just-finished': false, 'long-tool': true, abandoned: false, 'no-signal-fresh': true, 'no-signal-old': false,
+      'written-after-idle': true, parent: true,
+    });
+    expect(queries.overview(db, now).liveCount).toBe(4);
   });
 
   it('indexes message text in FTS', () => {

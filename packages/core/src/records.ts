@@ -13,6 +13,11 @@ export type NormalizedRecord =
       parentSessionId?: string;
       /** Higher rank wins: 3 user-set, 2 harness-generated, 1 first prompt, 0 last-resort placeholder. */
       title?: { text: string; rank: 0 | 1 | 2 | 3 };
+      /**
+       * What the harness itself says the agent is doing as of `timestamp`: mid-turn or waiting for the user.
+       * Omit when the record says nothing about it; "running" then falls back to recent activity.
+       */
+      activity?: 'running' | 'idle';
     }
   | ({ kind: 'message'; raw?: string } & Message)
   | ({ kind: 'tool_call' } & ToolCall)

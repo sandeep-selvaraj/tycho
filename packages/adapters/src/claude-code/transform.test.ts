@@ -83,7 +83,18 @@ describe('claude-code activity and fallback titles', () => {
   const ctx = { file: main, root };
   const line = (o: object) => claudeCode.transform({ uuid: 'x', sessionId: 'sess-1', timestamp: '2026-11-01T10:00:00.000Z', ...o }, ctx);
   const session = (o: object) => of(line(o), 'session')[0];
+  const assistant = (stop_reason: string | null) => session({ type: 'assistant', message: { id: 'm', model: 'claude-opus-5-5', stop_reason, content: [{ type: 'text', text: 'hi' }] } });
   const user = (content: unknown) => session({ type: 'user', message: { role: 'user', content } });
+
+  it('reads whether a turn is still going from each line', () => {
+    expect(assistant('tool_use')?.activity).toBe('running');
+    expect(assistant('end_turn')?.activity).toBe('idle');
+    expect(assistant(null)?.activity).toBeUndefined();
+    expect(user('Fix the test')?.activity).toBe('running');
+    expect(user([{ type: 'tool_result', tool_use_id: 't', content: 'ok' }])?.activity).toBe('running');
+    expect(user('[Request interrupted by user]')?.activity).toBe('idle');
+    expect(user('<local-command-stdout>done</local-command-stdout>')?.activity).toBeUndefined();
+  });
 
   it('titles a session of only slash commands after the command', () => {
     expect(user('<command-name>/plugin</command-name>\n<command-message>plugin</command-message>\n<command-args>marketplace add x/y</command-args>')?.title)

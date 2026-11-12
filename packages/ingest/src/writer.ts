@@ -25,8 +25,8 @@ export class Writer {
     this.clean = (s) => (s === undefined ? null : on ? redact(s) : s);
     this.s = {
       session: db.prepare(`
-        INSERT INTO sessions (id, harness, native_id, project_path, title, title_rank, started_at, updated_at, parent_session_id, source_ref)
-        VALUES (@id, @harness, @nativeId, @projectPath, @title, @titleRank, @ts, @ts, @parentSessionId, @sourceRef)
+        INSERT INTO sessions (id, harness, native_id, project_path, title, title_rank, started_at, updated_at, parent_session_id, source_ref, activity, activity_at)
+        VALUES (@id, @harness, @nativeId, @projectPath, @title, @titleRank, @ts, @ts, @parentSessionId, @sourceRef, @activity, CASE WHEN @activity IS NOT NULL THEN @ts END)
         ON CONFLICT(id) DO UPDATE SET
           project_path = COALESCE(sessions.project_path, excluded.project_path),
           parent_session_id = COALESCE(excluded.parent_session_id, sessions.parent_session_id),
@@ -36,6 +36,8 @@ export class Writer {
                          OR (excluded.title_rank = sessions.title_rank AND excluded.title_rank >= 2) THEN excluded.title
                        ELSE sessions.title END,
           title_rank = CASE WHEN excluded.title IS NULL THEN sessions.title_rank ELSE MAX(sessions.title_rank, excluded.title_rank) END,
+          activity = CASE WHEN excluded.activity IS NOT NULL AND excluded.activity_at >= COALESCE(sessions.activity_at, '') THEN excluded.activity ELSE sessions.activity END,
+          activity_at = CASE WHEN excluded.activity IS NOT NULL AND excluded.activity_at >= COALESCE(sessions.activity_at, '') THEN excluded.activity_at ELSE sessions.activity_at END,
           started_at = CASE WHEN excluded.started_at = '' THEN sessions.started_at WHEN sessions.started_at = '' THEN excluded.started_at ELSE MIN(sessions.started_at, excluded.started_at) END,
           updated_at = MAX(sessions.updated_at, excluded.updated_at)`),
       message: db.prepare(`
@@ -82,6 +84,7 @@ export class Writer {
             id: r.id, harness: r.harness, nativeId: r.nativeId, projectPath: r.projectPath ?? null,
             title: r.title ? this.clean(r.title.text) : null, titleRank: r.title?.rank ?? 0, ts: r.timestamp,
             parentSessionId: r.parentSessionId ?? null, sourceRef: r.sourceRef,
+            activity: r.timestamp ? r.activity ?? null : null,
           });
           break;
         case 'message':

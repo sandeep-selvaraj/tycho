@@ -41,6 +41,21 @@ describe('cursor adapter', () => {
     });
   });
 
+  it('takes "running" from Cursor\'s own status', () => {
+    const { dir, db, ing, T } = setup();
+    ing.backfill();
+    const at = new Date(T + 150_000);
+    // Completed 90 s ago: not running, though recency alone (two minutes) would still say so.
+    expect(queries.sessions(db, {}, at).find((r) => r.id === 'cursor:c-new')?.live).toBe(false);
+    const h = new Database(path.join(dir, 'globalStorage', 'state.vscdb'));
+    const c = JSON.parse(h.prepare(`SELECT value FROM cursorDiskKV WHERE key='composerData:c-new'`).pluck().get() as string);
+    h.prepare(`UPDATE cursorDiskKV SET value = ? WHERE key='composerData:c-new'`).run(JSON.stringify({ ...c, status: 'generating', lastUpdatedAt: T + 120_000 }));
+    h.close();
+    ing.backfill();
+    // Mid-turn and quiet for five minutes (a long tool call): still running.
+    expect(queries.sessions(db, {}, new Date(T + 420_000)).find((r) => r.id === 'cursor:c-new')?.live).toBe(true);
+  });
+
   it('keeps bubbles in their own conversation (key ranges do not leak)', () => {
     const { db, ing } = setup();
     ing.backfill();

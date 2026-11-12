@@ -11,7 +11,9 @@ const COMPOSERS = `
     json_extract(c.value, '$.workspaceIdentifier.id') AS workspaceId,
     json_extract(c.value, '$.modelConfig.modelName') AS model,
     json_extract(c.value, '$.subagentComposerIds') AS subagents,
-    json_extract(c.value, '$.usageData') AS usageData
+    json_extract(c.value, '$.usageData') AS usageData,
+    json_extract(c.value, '$.status') AS status,
+    COALESCE(json_array_length(c.value, '$.generatingBubbleIds'), 0) AS generating
   FROM cursorDiskKV c
   WHERE c.key >= 'composerData:' AND c.key < 'composerData;' AND cursor >= @cursor`;
 

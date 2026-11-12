@@ -73,6 +73,8 @@ function composer(r: Row, ctx: SourceCtx): NormalizedRecord[] {
   if (!id) return [];
   const created = iso(r.createdAt);
   const updated = iso(r.cursor);
+  // Cursor's own state: `generating` while a turn runs, then completed / aborted / none.
+  const activity = typeof r.status === 'string' ? (r.status === 'generating' || Number(r.generating) > 0 ? 'running' as const : 'idle' as const) : undefined;
   const base = {
     kind: 'session' as const, id: sid(id), harness: H, nativeId: id, sourceRef: ctx.file,
     projectPath: str(r.fsPath) ?? workspacePath(ctx.root, str(r.workspaceId)),
@@ -80,6 +82,8 @@ function composer(r: Row, ctx: SourceCtx): NormalizedRecord[] {
   const out: NormalizedRecord[] = [];
   if (created) out.push({ ...base, timestamp: created, title: str(r.name) ? { text: str(r.name)!, rank: 2 } : undefined });
   if (updated && updated !== created) out.push({ ...base, timestamp: updated });
+  const last = out[out.length - 1];
+  if (last?.kind === 'session') last.activity = activity;
 
   // Subagents are separate conversations listed on their parent.
   for (const child of parseJson<string[]>(r.subagents) ?? []) {
