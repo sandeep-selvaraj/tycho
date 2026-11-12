@@ -95,3 +95,24 @@ describe('session queries', () => {
     expect(queries.session(db, 'nope')).toBeNull();
   });
 });
+
+describe('session titles', () => {
+  it('keeps the first prompt as title, lets harness titles be renamed, and never downgrades', async () => {
+    const { Writer } = await import('./writer');
+    const db = openDb(':memory:');
+    const w = new Writer(db);
+    const put = (text: string, rank: 0 | 1 | 2 | 3) =>
+      w.write([{ kind: 'session', id: 's', harness: 'h', nativeId: 's', sourceRef: 'f', timestamp: '2026-11-01T10:00:00.000Z', title: { text, rank } }]);
+    const title = () => db.prepare(`SELECT title FROM sessions WHERE id='s'`).pluck().get();
+    put('/plugin', 0);
+    expect(title()).toBe('/plugin');
+    put('Fix the login test', 1);
+    put('yes', 1);
+    expect(title()).toBe('Fix the login test');
+    put('Login test fix', 2);
+    put('Flaky login test', 2);
+    expect(title()).toBe('Flaky login test');
+    put('ok go', 1);
+    expect(title()).toBe('Flaky login test');
+  });
+});

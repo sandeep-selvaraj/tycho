@@ -11,8 +11,8 @@ export type NormalizedRecord =
       timestamp: string;
       projectPath?: string;
       parentSessionId?: string;
-      /** Higher rank wins: 3 user-set, 2 harness-generated, 1 first prompt. */
-      title?: { text: string; rank: 1 | 2 | 3 };
+      /** Higher rank wins: 3 user-set, 2 harness-generated, 1 first prompt, 0 last-resort placeholder. */
+      title?: { text: string; rank: 0 | 1 | 2 | 3 };
     }
   | ({ kind: 'message'; raw?: string } & Message)
   | ({ kind: 'tool_call' } & ToolCall)

@@ -52,6 +52,14 @@ function flattenContent(c: unknown): string {
   return '';
 }
 
+/** `<command-name>/plugin</command-name> … <command-args>add x</command-args>` → `/plugin add x`. */
+function commandTitle(text: string): string | undefined {
+  const name = /<command-name>\s*([^<]+?)\s*<\/command-name>/.exec(text)?.[1];
+  if (!name) return undefined;
+  const args = /<command-args>\s*([^<]*?)\s*<\/command-args>/.exec(text)?.[1];
+  return `${name}${args ? ` ${args}` : ''}`.slice(0, 120);
+}
+
 function clip(s: string): string {
   return s.length > OUTPUT_LIMIT ? `${s.slice(0, OUTPUT_LIMIT)}\n… [truncated ${s.length - OUTPUT_LIMIT} chars]` : s;
 }
@@ -116,8 +124,13 @@ export function transform(raw: unknown, ctx: SourceCtx): NormalizedRecord[] {
   if (!text) return out;
   const role = l.isCompactSummary ? 'system' : 'user';
   out.push({ kind: 'message', id: l.uuid, sessionId: s.id, role, timestamp: ts, text, isSidechain });
-  if (role === 'user' && !isSidechain && !text.startsWith('<')) {
-    session.title = { text: text.split('\n')[0]!.slice(0, 120), rank: 1 };
+  if (role === 'user' && !isSidechain) {
+    if (!text.startsWith('<')) session.title = { text: text.split('\n')[0]!.slice(0, 120), rank: 1 };
+    else {
+      // Sessions made only of slash commands would otherwise stay untitled.
+      const cmd = commandTitle(text);
+      if (cmd) session.title = { text: cmd, rank: 0 };
+    }
   }
   return out;
 }

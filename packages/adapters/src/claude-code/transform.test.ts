@@ -78,3 +78,16 @@ describe('claude-code adapter', () => {
     expect(normalizeToolName('Edit')).toBe('edit');
   });
 });
+
+describe('claude-code activity and fallback titles', () => {
+  const ctx = { file: main, root };
+  const line = (o: object) => claudeCode.transform({ uuid: 'x', sessionId: 'sess-1', timestamp: '2026-11-01T10:00:00.000Z', ...o }, ctx);
+  const session = (o: object) => of(line(o), 'session')[0];
+  const user = (content: unknown) => session({ type: 'user', message: { role: 'user', content } });
+
+  it('titles a session of only slash commands after the command', () => {
+    expect(user('<command-name>/plugin</command-name>\n<command-message>plugin</command-message>\n<command-args>marketplace add x/y</command-args>')?.title)
+      .toEqual({ text: '/plugin marketplace add x/y', rank: 0 });
+    expect(user('<local-command-stdout>done</local-command-stdout>')?.title).toBeUndefined();
+  });
+});
