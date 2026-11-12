@@ -121,12 +121,53 @@ describe('cursor adapter', () => {
 
   it('re-reads only conversations that changed', () => {
     const { dir, db, ing, T } = setup();
-    ing.backfill();
+    const [first] = ing.backfill();
     appendBubble(dir, T);
     const [r] = ing.backfill();
-    expect(r!.records).toBeLessThan(20);
+    // c-new and its subagent, not c-old.
+    expect(r!.records).toBeLessThan(first!.records);
     expect(get(db, `SELECT COUNT(*) n FROM messages WHERE text = 'Also check VAT'`)).toEqual({ n: 1 });
     expect(get(db, `SELECT COUNT(*) n FROM messages WHERE session_id='cursor:c-old'`)).toEqual({ n: 1 });
+  });
+
+  it('picks up a running chat and its subagent before Cursor stamps the conversation as updated', () => {
+    const { dir, db, ing, T } = setup();
+    ing.backfill();
+    const h = new Database(path.join(dir, 'globalStorage', 'state.vscdb'));
+    const kv = (k: string, v: unknown) => h.prepare(`INSERT INTO cursorDiskKV VALUES (?, ?)`).run(k, JSON.stringify(v));
+    const at = (ms: number) => new Date(T + ms).toISOString();
+    // A newer conversation exists, so c-new is no longer the latest one; its own stamp stays at T + 60 s.
+    kv('composerData:c-later', { composerId: 'c-later', name: 'Later', createdAt: T + 100_000, lastUpdatedAt: T + 100_000, status: 'completed' });
+    kv('bubbleId:c-later:b1', { type: 1, text: 'Something else', createdAt: at(100_000) });
+    ing.backfill();
+    kv('bubbleId:c-new:b7', { type: 1, text: 'Now review the branch', createdAt: at(200_000) });
+    kv('bubbleId:c-new:b8', {
+      type: 2, createdAt: at(201_000),
+      toolFormerData: { toolCallId: 'call-task', name: 'task_v2', status: 'loading', rawArgs: '{"description":"Bugbot"}', additionalData: { status: 'running', subagentComposerId: 'c-bot' } },
+    });
+    kv('composerData:c-bot', { composerId: 'c-bot', name: 'Bugbot', createdAt: T + 201_000, status: 'none', subagentInfo: { subagentTypeName: 'bugbot' } });
+    kv('bubbleId:c-bot:b1', { type: 2, text: 'Reading the diff', createdAt: at(203_000) });
+    ing.backfill();
+    expect(get(db, `SELECT COUNT(*) n FROM messages WHERE text IN ('Now review the branch', 'Reading the diff')`)).toEqual({ n: 2 });
+    // Five quiet minutes into the subagent's run: the parent is running, and says which job is in flight.
+    const during = queries.sessions(db, {}, new Date(T + 503_000)).find((r) => r.id === 'cursor:c-new');
+    expect(during).toMatchObject({ live: true, runningSubagents: ['Bugbot'], subagents: 2 });
+
+    // The subagent finishes. Cursor leaves the call on "loading" but records the outcome next to it.
+    kv('bubbleId:c-bot:b2', { type: 2, text: 'No issues found', createdAt: at(520_000) });
+    kv('bubbleId:c-new:b8', {
+      type: 2, createdAt: at(201_000), completedAtMs: T + 521_000,
+      toolFormerData: { toolCallId: 'call-task', name: 'task_v2', status: 'loading', rawArgs: '{"description":"Bugbot"}', additionalData: { status: 'success', subagentComposerId: 'c-bot', terminationReason: 'completed' } },
+    });
+    const c = JSON.parse(h.prepare(`SELECT value FROM cursorDiskKV WHERE key='composerData:c-new'`).pluck().get() as string);
+    kv('composerData:c-new', { ...c, status: 'completed', lastUpdatedAt: T + 522_000, subagentComposerIds: ['c-sub', 'c-bot'] });
+    h.close();
+    ing.backfill();
+    const after = queries.sessions(db, {}, new Date(T + 530_000)).find((r) => r.id === 'cursor:c-new');
+    expect(after).toMatchObject({ live: false, runningSubagents: [] });
+    expect(get(db, `SELECT status FROM tool_calls WHERE id='cursor:call-task'`)).toEqual({ status: 'ok' });
+    // The subagent has no stamp of its own; it is re-read with its parent, so its usage is complete.
+    expect(get(db, `SELECT output_tokens o FROM usage_events WHERE session_id='cursor:c-bot'`)).toEqual({ o: Math.ceil(('Reading the diff'.length + 'No issues found'.length) / 4) });
   });
 
   it('never writes to the Cursor database', () => {

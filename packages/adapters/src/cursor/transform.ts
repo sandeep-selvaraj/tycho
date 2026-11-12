@@ -121,10 +121,22 @@ function bubble(r: Row, ctx: SourceCtx): NormalizedRecord[] {
     if (role === 'user') out.push({ kind: 'session', id: sessionId, harness: H, nativeId: composerId, sourceRef: ctx.file, timestamp: ts, title: { text: text.split('\n')[0]!.slice(0, 120), rank: 1 } });
   }
   const tool = str(r.toolName);
+  // A task call names the subagent it launched and tracks it: running, then success / error / cancelled.
+  // Cursor often leaves the call itself on "loading" after the subagent is done, so that status wins.
+  const subagentStatus = str(r.subagentStatus);
+  const subagentDone = subagentStatus !== undefined && subagentStatus !== 'running';
+  const subagent = str(r.subagentId);
+  if (subagent) {
+    out.push({
+      kind: 'session', id: sid(subagent), harness: H, nativeId: subagent, sourceRef: ctx.file, parentSessionId: sessionId,
+      timestamp: (subagentDone && iso(r.completedAtMs)) || ts, activity: subagentStatus === undefined ? undefined : subagentDone ? 'idle' : 'running',
+    });
+  }
   if (tool) {
     out.push({
       kind: 'tool_call', id: `${H}:${str(r.toolCallId) ?? bubbleId}`, sessionId, messageId: msgId, name: normalizeCursorTool(tool), nativeName: tool,
-      input: str(r.toolInput), output: str(r.toolOutput), status: toolStatus(r.toolStatus),
+      input: str(r.toolInput), output: str(r.toolOutput),
+      status: subagentDone ? (subagentStatus === 'success' ? 'ok' : 'error') : toolStatus(r.toolStatus),
       startedAt: iso(r.startedAtMs) ?? ts, endedAt: iso(r.completedAtMs),
     });
   }
@@ -156,13 +168,14 @@ function estimate(r: Row): NormalizedRecord[] {
   if (!composerId || !day || !ts || r.hasUsageData || (num(r.recorded) ?? 0) > 0) return [];
   const prompts = num(r.prompts) ?? 0;
   // Tool bubbles carry the id of the call that produced them; each prompt also ends in one call with no tool.
-  const requests = (num(r.modelCalls) ?? 0) + prompts;
+  // A subagent that only replied (no prompt bubble, no tools) still made one.
+  const requests = Math.max(1, (num(r.modelCalls) ?? 0) + prompts);
   const ctxCount = num(r.ctxCount) ?? 0;
   const context = ctxCount > 0 ? (num(r.ctxSum) ?? 0) / ctxCount : num(r.contextTokens) ?? 0;
   const inputTokens = Math.ceil((num(r.inChars) ?? 0) / CHARS_PER_TOKEN);
   const outputTokens = Math.ceil((num(r.outChars) ?? 0) / CHARS_PER_TOKEN);
   const cacheReadTokens = Math.round(requests * context);
-  if (requests === 0 || inputTokens + outputTokens + cacheReadTokens === 0) return [];
+  if (inputTokens + outputTokens + cacheReadTokens === 0) return [];
   return [{
     kind: 'usage', id: `${H}:${composerId}:estimate:${day}`, sessionId: sid(composerId), timestamp: ts, provider: 'cursor',
     model: str(r.model) ?? str(r.composerModel) ?? 'unknown', requests,
@@ -181,7 +194,7 @@ function parseJson<T>(v: unknown): T | undefined {
 
 export function transformRow(raw: { table: string; row: Row }, ctx: SourceCtx): NormalizedRecord[] {
   if (raw.table === 'composer') return composer(raw.row, ctx);
-  if (raw.table === 'bubble') return bubble(raw.row, ctx);
+  if (raw.table === 'bubble' || raw.table === 'new-bubble') return bubble(raw.row, ctx);
   if (raw.table === 'estimate') return estimate(raw.row);
   return [];
 }
