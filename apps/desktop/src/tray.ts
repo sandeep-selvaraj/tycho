@@ -33,7 +33,8 @@ export function createTray(db: BetterSqlite3.Database, actions: { open: () => vo
           ? { label: `${o.liveCount} running`, enabled: false }
           : { label: 'Nothing running', enabled: false },
         ...live.map((s) => ({
-          label: `${s.title.slice(0, 48)}  ${usd(s.costUsd)}`,
+          // No usage recorded is not $0.
+          label: `${s.title.slice(0, 48)}  ${s.costSource === null ? '—' : `${s.costSource === 'estimated' ? '~' : ''}${usd(s.costUsd)}`}`,
           sublabel: s.projectPath?.split('/').pop(),
           click: () => actions.openSession(s.id),
         })),
