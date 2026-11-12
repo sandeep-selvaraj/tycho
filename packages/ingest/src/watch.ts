@@ -4,7 +4,7 @@ import type { Ingestor } from './ingestor';
 
 /**
  * Watch an adapter's roots and re-ingest files as harnesses append to them.
- * Debounced per file; new files (new sessions, new projects) are picked up the same way.
+ * At most one read per file per `debounceMs`, starting that long after the first change; new files (new sessions, new projects) are picked up the same way.
  */
 export function watchSources(
   ing: Ingestor,
@@ -19,7 +19,9 @@ export function watchSources(
     const file = changed.replace(/-(wal|shm|journal)$/, '');
     const root = rootOf(file);
     if (!root || !ing.spec.discover.match(path.relative(root, file))) return;
-    clearTimeout(timers.get(file));
+    // Already scheduled: leave it. Restarting the timer on every change would postpone ingestion for as
+    // long as the harness keeps writing, so a busy session would only appear once it went quiet.
+    if (timers.has(file)) return;
     timers.set(
       file,
       setTimeout(() => {
