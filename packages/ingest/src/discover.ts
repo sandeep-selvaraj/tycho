@@ -9,9 +9,10 @@ export function expand(p: string, env: NodeJS.ProcessEnv = process.env): string 
 
 /** Existing roots for this spec on this machine. An env override replaces the defaults. */
 export function rootsFor(spec: AdapterSpec, env: NodeJS.ProcessEnv = process.env, platform = process.platform): string[] {
-  const fromEnv = spec.discover.env && env[spec.discover.env.name];
-  const list = fromEnv
-    ? fromEnv.split(',').map((d) => path.join(expand(d.trim(), env), spec.discover.env!.suffix))
+  const override = spec.discover.env;
+  const fromEnv = override && env[override.name];
+  const list = fromEnv && override
+    ? fromEnv.split(',').flatMap((d) => [override.suffix].flat().map((suffix) => path.join(expand(d.trim(), env), suffix)))
     : (spec.discover.roots[platform] ?? spec.discover.roots.default ?? [])
         // A root that names an unset variable does not apply on this machine.
         .filter((r) => [...r.matchAll(/\$(\w+)/g)].every(([, k]) => env[k!]))

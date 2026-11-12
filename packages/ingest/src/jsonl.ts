@@ -1,6 +1,7 @@
 import { closeSync, fstatSync, openSync, readSync } from 'node:fs';
 
 export interface JsonlChunk {
+  /** Complete physical lines, including blanks, so adapters can track ordinals. */
   lines: string[];
   /** Byte offset just past the last complete line; resume from here. */
   nextOffset: number;
@@ -33,7 +34,7 @@ export function readJsonl(file: string, offset: number, maxBytes = 64 * CHUNK): 
     const lastNl = data.lastIndexOf(0x0a);
     const start = reset ? 0 : offset;
     if (lastNl < 0) return { lines: [], nextOffset: start, reset };
-    const lines = data.subarray(0, lastNl).toString('utf8').split('\n').filter((l) => l.trim());
+    const lines = data.subarray(0, lastNl).toString('utf8').split('\n');
     return { lines, nextOffset: start + lastNl + 1, reset };
   } finally {
     closeSync(fd);

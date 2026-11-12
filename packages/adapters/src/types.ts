@@ -11,18 +11,17 @@ export interface SourceCtx {
  * Declarative description of a harness. The ingest engine knows nothing harness-specific:
  * it discovers files from `discover`, reads them with `reader`, and hands each raw record to `transform`.
  */
-export interface AdapterSpec {
+interface AdapterFields {
   harness: string;
   displayName: string;
   discover: {
     /** Candidate roots per OS. `~` and `$VAR` are expanded; missing roots are skipped. */
     roots: Partial<Record<NodeJS.Platform, string[]>> & { default?: string[] };
-    /** Override from an env var (e.g. CLAUDE_CONFIG_DIR), joined with `envSuffix`. Comma-separated values allowed. */
-    env?: { name: string; suffix: string };
+    /** Override from an env var (e.g. CLAUDE_CONFIG_DIR), joined with each suffix. Comma-separated values allowed. */
+    env?: { name: string; suffix: string | string[] };
     /** File-name test applied while walking each root. */
     match: (relPath: string) => boolean;
   };
-  reader: 'jsonl' | 'json-tree' | 'sqlite-table';
   /**
    * For `sqlite-table`: tables to read incrementally. Each query receives `@cursor` (the highest
    * cursor value seen so far, initially 0) and must return a `cursor` column. Rows are re-read when
@@ -30,6 +29,19 @@ export interface AdapterSpec {
    */
   sqlite?: { tables: { name: string; requires: string[]; sql: string }[] };
   watch: { mode: 'append' | 'mtime'; debounceMs: number };
+}
+
+export type AdapterSpec = AdapterFields & ({
+  reader: 'jsonl';
+  /** One transformer per source, restored from the checkpoint at the committed byte offset. */
+  createJsonlTransform: (ctx: SourceCtx, checkpoint: string | null) => {
+    transform: (raw: unknown, ordinal: number) => NormalizedRecord[];
+    checkpoint: () => string;
+  };
+  transform?: never;
+} | {
+  reader: 'jsonl' | 'json-tree' | 'sqlite-table';
+  createJsonlTransform?: never;
   /**
    * Map one raw record to normalized records.
    * - jsonl: one parsed line
@@ -37,4 +49,4 @@ export interface AdapterSpec {
    * - sqlite-table: `{ table, row }` where `table` is the configured name
    */
   transform: (raw: unknown, ctx: SourceCtx) => NormalizedRecord[];
-}
+});

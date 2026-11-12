@@ -6,7 +6,7 @@
 :root{
   --bg:#0b0b0c; --panel:#111113; --raise:#17171a; --line:#232327; --line-2:#2c2c31;
   --fg:#ececee; --fg-2:#a1a1a8; --fg-3:#8b8b94;
-  --claude:#e0a050; --opencode:#6c93e6; --cursor:#5fbf7f; --alert:#f07360; --ok:#5fbf7f;
+  --claude:#e0a050; --opencode:#6c93e6; --cursor:#5fbf7f; --codex:#b39af5; --alert:#f07360; --ok:#5fbf7f;
   --f-ui:"Geist",system-ui,sans-serif; --f-mono:"Geist Mono",ui-monospace,monospace;
   --r:8px;
 }

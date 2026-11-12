@@ -16,5 +16,5 @@ export type NormalizedRecord =
     }
   | ({ kind: 'message'; raw?: string } & Message)
   | ({ kind: 'tool_call' } & ToolCall)
-  | { kind: 'tool_result'; id: string; sessionId: string; status: 'ok' | 'error'; output?: string; endedAt: string }
+  | { kind: 'tool_result'; id: string; sessionId: string; status: 'ok' | 'error' | 'unknown'; output?: string; endedAt: string }
   | ({ kind: 'usage' } & Omit<UsageEvent, 'costUsd' | 'costSource'> & Partial<Pick<UsageEvent, 'costUsd' | 'costSource'>>);

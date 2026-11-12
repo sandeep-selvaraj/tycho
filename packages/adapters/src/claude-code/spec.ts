@@ -2,7 +2,7 @@ import path from 'node:path';
 import type { AdapterSpec } from '../types';
 import { transform } from './transform';
 
-export const claudeCode: AdapterSpec = {
+export const claudeCode = {
   harness: 'claude-code',
   displayName: 'Claude Code',
   discover: {
@@ -18,4 +18,4 @@ export const claudeCode: AdapterSpec = {
   reader: 'jsonl',
   watch: { mode: 'append', debounceMs: 250 },
   transform,
-};
+} satisfies AdapterSpec;

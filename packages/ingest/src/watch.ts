@@ -6,7 +6,11 @@ import type { Ingestor } from './ingestor';
  * Watch an adapter's roots and re-ingest files as harnesses append to them.
  * Debounced per file; new files (new sessions, new projects) are picked up the same way.
  */
-export function watchSources(ing: Ingestor, onIngested: (file: string, records: number) => void): () => Promise<void> {
+export function watchSources(
+  ing: Ingestor,
+  onIngested: (file: string, records: number) => void,
+  onReady?: () => void,
+): () => Promise<void> {
   const roots = ing.roots();
   const timers = new Map<string, NodeJS.Timeout>();
   const rootOf = (f: string) => roots.find((r) => f.startsWith(r + path.sep));
@@ -28,6 +32,7 @@ export function watchSources(ing: Ingestor, onIngested: (file: string, records: 
   };
   const w = chokidar(roots, { ignoreInitial: true, depth: 6, awaitWriteFinish: false, persistent: true });
   w.on('add', schedule).on('change', schedule);
+  if (onReady) w.once('ready', onReady);
   return async () => {
     for (const t of timers.values()) clearTimeout(t);
     await w.close();

@@ -11,7 +11,7 @@
 
 <p align="center"><b>One local view of every AI coding agent on your machine.</b></p>
 
-Tycho is a desktop app that reads the session history your coding agents already write to disk, including Claude Code, OpenCode and Cursor. It shows every chat, every tool call, and what the tokens would have cost, in one searchable place. It backfills your existing history on first launch and then updates live while agents run.
+Tycho is a desktop app that reads the session history your coding agents already write to disk, including Claude Code, OpenCode, Cursor, and Codex. It shows every chat, every tool call, and what the tokens would have cost, in one searchable place. It backfills your existing history on first launch and then updates live while agents run.
 
 > Named after Tycho Brahe, who recorded the raw observations that Kepler later turned into laws. Tycho does the same for coding agents: it records what happened and leaves the conclusions to you.
 
@@ -54,6 +54,7 @@ Tycho is a desktop app that reads the session history your coding agents already
 | **Claude Code** | `~/.claude/projects/**.jsonl`, or `$CLAUDE_CONFIG_DIR/projects` (also `~/.config/claude/projects`) | **Computed** from token counts. Matches `ccusage` to the cent. |
 | **OpenCode** | `$XDG_DATA_HOME/opencode` or `~/.local/share/opencode`: `opencode.db` (current and older SQLite layouts) and the legacy `storage/` JSON files | **Reported** by OpenCode when it's above $0, otherwise computed |
 | **Cursor** | macOS `~/Library/Application Support/Cursor/User`, Linux `~/.config/Cursor/User`, Windows `%APPDATA%\Cursor\User` (`globalStorage/state.vscdb`) | **Estimated**, and only where Cursor recorded tokens or its own charge. See below. |
+| **Codex** | Local CLI and Desktop `rollout-*.jsonl` logs under `sessions/` and `archived_sessions/` in `$CODEX_HOME` (defaults to `~/.codex`) | **Computed** from recorded token counts at API prices. |
 
 Subagents and sidechains appear as part of their parent session, and nothing is counted twice.
 
@@ -184,7 +185,7 @@ Every cost carries a stamp showing where it came from:
 
 | Stamp | Meaning |
 |---|---|
-| **C** computed | Priced by Tycho from token counts (Claude Code; OpenCode when it reports $0) |
+| **C** computed | Priced by Tycho from token counts (Claude Code, Codex, and OpenCode when it reports $0) |
 | **R** reported | The harness reported the cost itself (OpenCode) |
 | **E** estimated | Approximate (Cursor) |
 | `—` | The harness recorded no token or cost data for this session |
@@ -204,7 +205,7 @@ Every cost carries a stamp showing where it came from:
 - Signed and notarized releases, with prebuilt downloads for macOS, Windows and Linux
 - Verified Windows and Linux builds
 - An in-app price refresh, and recalculating stored costs after a refresh
-- More harnesses: Codex CLI, Gemini CLI, Aider, Copilot
+- More harnesses: Gemini CLI, Aider, Copilot
 - An optional *precise mode* local proxy for harnesses that support a custom base URL
 
 ## License

@@ -91,12 +91,14 @@ export class Ingestor {
   }
 
   private transformAll(raws: unknown[], src: Source) {
+    const { transform } = this.spec;
+    if (!transform) throw new Error('Missing record transformer');
     const records: NormalizedRecord[] = [];
     let skipped = 0;
     let error: string | null = null;
     for (const raw of raws) {
       try {
-        records.push(...this.spec.transform(raw, src));
+        records.push(...transform(raw, src));
       } catch (e) {
         skipped++;
         error = `Unreadable record: ${(e as Error).message}`;
@@ -106,28 +108,52 @@ export class Ingestor {
   }
 
   private ingestJsonl(src: Source): IngestResult {
-    let offset = this.state(src.file)?.offset ?? 0;
+    const prev = this.state(src.file);
+    let offset = prev?.offset ?? 0;
+    const { createJsonlTransform, transform } = this.spec;
+    const saved = createJsonlTransform && prev?.lastKey
+      ? JSON.parse(prev.lastKey) as { ordinal: number; checkpoint: string }
+      : undefined;
+    let ordinal = saved?.ordinal ?? 0;
+    let stateful = createJsonlTransform?.(src, saved?.checkpoint ?? null);
     let total = 0;
     let skippedAll = 0;
     for (;;) {
       const chunk = readJsonl(src.file, offset);
       if (chunk.lines.length === 0 && !chunk.reset) break;
-      const parsed: unknown[] = [];
-      let bad = 0;
+      if (chunk.reset) {
+        ordinal = 0;
+        stateful = createJsonlTransform?.(src, null);
+      }
+      const records: NormalizedRecord[] = [];
+      let read = 0;
+      let skipped = 0;
+      let error: string | null = null;
       for (const line of chunk.lines) {
+        const index = ordinal++;
+        if (!line.trim()) continue;
+        read++;
+        let raw: unknown;
         try {
-          parsed.push(JSON.parse(line));
+          raw = JSON.parse(line);
         } catch {
-          bad++;
+          skipped++;
+          error = 'Unparseable JSON line';
+          continue;
+        }
+        try {
+          records.push(...(stateful ? stateful.transform(raw, index) : transform!(raw, src)));
+        } catch (e) {
+          skipped++;
+          error = `Unreadable record: ${(e as Error).message}`;
         }
       }
-      const { records, skipped, error } = this.transformAll(parsed, src);
       this.commit(src, records, {
-        kind: 'offset', offset: chunk.nextOffset, mtime: statSync(src.file).mtimeMs, read: chunk.lines.length,
-        skipped: skipped + bad, error: bad ? 'Unparseable JSON line' : error,
+        kind: 'offset', offset: chunk.nextOffset, mtime: statSync(src.file).mtimeMs, read, skipped, error,
+        lastKey: stateful ? JSON.stringify({ ordinal, checkpoint: stateful.checkpoint() }) : undefined,
       });
       total += records.length;
-      skippedAll += skipped + bad;
+      skippedAll += skipped;
       if (chunk.nextOffset === offset) break;
       offset = chunk.nextOffset;
     }

@@ -6,6 +6,7 @@ export const HARNESS: Record<string, { label: string; color: string }> = {
   'claude-code': { label: 'Claude', color: 'var(--claude)' },
   opencode: { label: 'OpenCode', color: 'var(--opencode)' },
   cursor: { label: 'Cursor', color: 'var(--cursor)' },
+  codex: { label: 'Codex', color: 'var(--codex)' },
 };
 export const harness = (h: string) => HARNESS[h] ?? { label: h, color: 'var(--fg-3)' };
 

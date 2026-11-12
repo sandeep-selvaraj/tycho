@@ -17,20 +17,22 @@ if (redacted) post({ type: 'changed', topic: 'sessions' });
 
 const ingestors = ADAPTERS.map((spec) => new Ingestor(db, spec));
 
-// Watch everything first, so live sessions keep updating while a large history loads.
-for (const ing of ingestors) {
+// Start each watcher before its backfill so files created during the initial scan are picked up.
+const watchReady = ingestors.map((ing) => new Promise<void>((resolve) => {
   try {
-    watchSources(ing, () => post({ type: 'changed', topic: 'usage' }));
+    watchSources(ing, () => post({ type: 'changed', topic: 'usage' }), resolve);
   } catch (e) {
     post({ type: 'error', harness: ing.spec.harness, message: (e as Error).message });
+    resolve();
   }
-}
+}));
 
 void (async () => {
   // Batches commit as they go; refresh the UI every couple of seconds during the first load.
   const pulse = setInterval(() => post({ type: 'changed', topic: 'sessions' }), 2000);
-  for (const ing of ingestors) {
+  for (const [index, ing] of ingestors.entries()) {
     try {
+      await watchReady[index];
       let last = 0;
       await ing.backfillAsync((p) => {
         const now = Date.now();

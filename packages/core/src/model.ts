@@ -3,7 +3,7 @@ import { z } from 'zod';
 export const CostSource = z.enum(['reported', 'computed', 'estimated']);
 export type CostSource = z.infer<typeof CostSource>;
 
-export type Harness = 'claude-code' | 'opencode' | 'cursor' | (string & {});
+export type Harness = 'claude-code' | 'opencode' | 'cursor' | 'codex' | (string & {});
 
 export const Session = z.object({
   id: z.string(),

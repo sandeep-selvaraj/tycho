@@ -49,8 +49,10 @@ export class Writer {
       toolResult: db.prepare(`
         INSERT INTO tool_calls (id, session_id, message_id, name, native_name, output, output_sha256, status, ended_at)
         VALUES (@id, @sessionId, '', 'unknown', 'unknown', @output, @sha, @status, @endedAt)
-        ON CONFLICT(id) DO UPDATE SET output = excluded.output, output_sha256 = excluded.output_sha256,
-          status = excluded.status, ended_at = excluded.ended_at`),
+        ON CONFLICT(id) DO UPDATE SET output = COALESCE(excluded.output, tool_calls.output),
+          output_sha256 = COALESCE(excluded.output_sha256, tool_calls.output_sha256),
+          status = CASE WHEN excluded.status = 'unknown' AND tool_calls.status IN ('ok','error') THEN tool_calls.status ELSE excluded.status END,
+          ended_at = CASE WHEN excluded.status = 'unknown' AND tool_calls.status IN ('ok','error') THEN tool_calls.ended_at ELSE excluded.ended_at END`),
       usage: db.prepare(`
         INSERT INTO usage_events (id, session_id, message_id, timestamp, provider, model, input_tokens, output_tokens,
           cache_read_tokens, cache_write_tokens, cache_write_1h_tokens, reasoning_tokens, cost_usd, cost_source)

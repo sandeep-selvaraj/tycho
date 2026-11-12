@@ -134,7 +134,7 @@ export function Sources() {
       <h1>Sources</h1>
       <p className="sub">Tycho only reads these. Nothing is installed in any harness.</p>
       {rows.length === 0 ? (
-        <div className="empty"><b>No sources discovered yet</b>Tycho looks for Claude Code history in ~/.claude/projects (or $CLAUDE_CONFIG_DIR).</div>
+        <div className="empty"><b>No sources discovered yet</b>Tycho looks for local session history from Claude Code, OpenCode, Cursor, and Codex.</div>
       ) : (
         <table>
           <thead><tr><th>Harness</th><th>Path</th><th>Health</th><th>Last ingest</th><th className="n">Records</th></tr></thead>
