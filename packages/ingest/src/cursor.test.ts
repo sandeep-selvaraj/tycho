@@ -62,6 +62,30 @@ describe('cursor adapter', () => {
     expect(queries.sessions(db, {}, new Date(T + 420_000)).find((r) => r.id === 'cursor:c-new')?.live).toBe(true);
   });
 
+  it('estimates usage from context size and model calls when Cursor records no tokens', () => {
+    const { dir, db, ing, T } = setup();
+    const h = new Database(path.join(dir, 'globalStorage', 'state.vscdb'));
+    const kv = (k: string, v: unknown) => h.prepare(`INSERT INTO cursorDiskKV VALUES (?, ?)`).run(k, JSON.stringify(v));
+    const zero = { tokenCount: { inputTokens: 0, outputTokens: 0 } };
+    kv('composerData:c-est', { composerId: 'c-est', name: 'Estimated', createdAt: T, lastUpdatedAt: T + 5000, status: 'completed', usageData: {}, modelConfig: { modelName: 'claude-4.5-sonnet' } });
+    kv('bubbleId:c-est:b1', { ...zero, type: 1, text: 'x'.repeat(400), createdAt: new Date(T).toISOString(), contextWindowStatusAtCreation: { tokensUsed: 10_000 } });
+    kv('bubbleId:c-est:b2', { ...zero, type: 2, createdAt: new Date(T + 1000).toISOString(), toolFormerData: { toolCallId: 't1', modelCallId: 'call-a', name: 'read_file_v2', status: 'completed', rawArgs: 'a'.repeat(40), result: 'r'.repeat(4000) } });
+    kv('bubbleId:c-est:b3', { ...zero, type: 2, createdAt: new Date(T + 2000).toISOString(), toolFormerData: { toolCallId: 't2', modelCallId: 'call-a', name: 'read_file_v2', status: 'completed', rawArgs: 'a'.repeat(40), result: '' } });
+    kv('bubbleId:c-est:b4', { ...zero, type: 2, createdAt: new Date(T + 3000).toISOString(), toolFormerData: { toolCallId: 't3', modelCallId: 'call-b', name: 'read_file_v2', status: 'completed', rawArgs: '', result: '' } });
+    kv('bubbleId:c-est:b5', { ...zero, type: 2, text: 'y'.repeat(800), thinking: { text: 'z'.repeat(1200) }, createdAt: new Date(T + 4000).toISOString() });
+    h.close();
+    ing.backfill();
+    ing.backfill(); // re-reading must not add to it
+    const day = new Date(T).toISOString().slice(0, 10);
+    expect(all(db, `SELECT id, model, cost_source s, input_tokens i, output_tokens o, cache_read_tokens cr, cost_usd > 0 priced FROM usage_events WHERE session_id='cursor:c-est'`)).toEqual([
+      // 2 distinct model calls + 1 prompt = 3 requests x 10k context; (400 + 4000) / 4 in; (800 + 1200 + 80) / 4 out.
+      { id: `cursor:c-est:estimate:${day}`, model: 'claude-4.5-sonnet', s: 'estimated', i: 1100, o: 520, cr: 30_000, priced: 1 },
+    ]);
+    expect(queries.sessions(db, {}, new Date(0)).find((r) => r.id === 'cursor:c-est')).toMatchObject({ costSource: 'estimated', totalTokens: 31_620 });
+    // Conversations with recorded tokens or Cursor's own charge are left alone.
+    expect(get(db, `SELECT COUNT(*) n FROM usage_events WHERE id LIKE '%:estimate:%' AND session_id != 'cursor:c-est' AND session_id != 'cursor:c-sub'`)).toEqual({ n: 0 });
+  });
+
   it('keeps bubbles in their own conversation (key ranges do not leak)', () => {
     const { db, ing } = setup();
     ing.backfill();
@@ -86,7 +110,7 @@ describe('cursor adapter', () => {
   it('marks every Cursor cost as estimated and never double counts', () => {
     const { db, ing } = setup();
     ing.backfill();
-    expect(all(db, `SELECT id, cost_source s, ROUND(cost_usd, 4) c, input_tokens i FROM usage_events ORDER BY id`)).toEqual([
+    expect(all(db, `SELECT id, cost_source s, ROUND(cost_usd, 4) c, input_tokens i FROM usage_events WHERE session_id != 'cursor:c-sub' ORDER BY id`)).toEqual([
       // c-old carries Cursor's own charge, so its token-bearing bubble is not counted again.
       { id: 'cursor:c-new:b5', s: 'estimated', c: expect.any(Number), i: 1200 },
       { id: 'cursor:c-old:usage:claude-4.5-sonnet-thinking', s: 'estimated', c: 0.49, i: 0 },

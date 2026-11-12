@@ -115,4 +115,15 @@ describe('session titles', () => {
     put('ok go', 1);
     expect(title()).toBe('Flaky login test');
   });
+
+  it('prices an aggregated event as several average requests, not one oversized one', async () => {
+    const { Writer } = await import('./writer');
+    const db = openDb(':memory:');
+    const base = { kind: 'usage' as const, sessionId: 's', timestamp: 't', model: 'grok-4.7', inputTokens: 0, outputTokens: 0, cacheReadTokens: 1_000_000, cacheWriteTokens: 0 };
+    new Writer(db).write([{ ...base, id: 'one' }, { ...base, id: 'ten', requests: 10 }]);
+    const cost = (id: string) => db.prepare(`SELECT cost_usd FROM usage_events WHERE id = ?`).pluck().get(id) as number;
+    // 100k tokens per request stays under the 200k long-context tier; 1M in one request does not.
+    expect(cost('ten')).toBeLessThan(cost('one'));
+    expect(cost('ten')).toBeGreaterThan(0);
+  });
 });

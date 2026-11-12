@@ -75,6 +75,17 @@ export class Writer {
     };
   }
 
+  /** Price an event; one that aggregates several requests is priced as that many average-sized requests. */
+  private cost(r: Extract<NormalizedRecord, { kind: 'usage' }>): number | undefined {
+    const n = Math.max(1, Math.round(r.requests ?? 1));
+    if (n === 1) return computeCost(r.model, r, undefined, this.aliases);
+    const one = computeCost(r.model, {
+      inputTokens: r.inputTokens / n, outputTokens: r.outputTokens / n, cacheReadTokens: r.cacheReadTokens / n,
+      cacheWriteTokens: r.cacheWriteTokens / n, cacheWrite1hTokens: (r.cacheWrite1hTokens ?? 0) / n,
+    }, undefined, this.aliases);
+    return one === undefined ? undefined : one * n;
+  }
+
   write(records: NormalizedRecord[]): WriteStats {
     let usage = 0;
     for (const r of records) {
@@ -108,7 +119,7 @@ export class Writer {
           break;
         case 'usage': {
           const reported = r.costUsd !== undefined;
-          const cost = reported ? r.costUsd : computeCost(r.model, r, undefined, this.aliases);
+          const cost = reported ? r.costUsd : this.cost(r);
           const info = this.s.usage.run({
             id: r.id, sessionId: r.sessionId, messageId: r.messageId ?? null, timestamp: r.timestamp, provider: r.provider ?? null,
             model: r.model, inputTokens: r.inputTokens, outputTokens: r.outputTokens, cacheReadTokens: r.cacheReadTokens,

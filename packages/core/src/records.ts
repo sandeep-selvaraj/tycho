@@ -22,4 +22,11 @@ export type NormalizedRecord =
   | ({ kind: 'message'; raw?: string } & Message)
   | ({ kind: 'tool_call' } & ToolCall)
   | { kind: 'tool_result'; id: string; sessionId: string; status: 'ok' | 'error' | 'unknown'; output?: string; endedAt: string }
-  | ({ kind: 'usage' } & Omit<UsageEvent, 'costUsd' | 'costSource'> & Partial<Pick<UsageEvent, 'costUsd' | 'costSource'>>);
+  | ({
+      kind: 'usage';
+      /**
+       * Number of API requests this event aggregates (default 1). Prices are tiered per request,
+       * so an aggregate is priced as `requests` average-sized requests rather than one huge one.
+       */
+      requests?: number;
+    } & Omit<UsageEvent, 'costUsd' | 'costSource'> & Partial<Pick<UsageEvent, 'costUsd' | 'costSource'>>);

@@ -141,6 +141,35 @@ function bubble(r: Row, ctx: SourceCtx): NormalizedRecord[] {
   return out;
 }
 
+const CHARS_PER_TOKEN = 4;
+
+/**
+ * Estimated usage for one conversation-day, used only when Cursor recorded no tokens for it.
+ * Every model call re-sends the conversation, so input is dominated by context re-reads:
+ * (model calls) x (average context size), counted as cache reads because Cursor caches prompts.
+ * New input (prompts, tool results) and output (replies, thinking, tool arguments) come from text length.
+ */
+function estimate(r: Row): NormalizedRecord[] {
+  const composerId = str(r.composerId);
+  const day = str(r.day);
+  const ts = iso(r.lastAt);
+  if (!composerId || !day || !ts || r.hasUsageData || (num(r.recorded) ?? 0) > 0) return [];
+  const prompts = num(r.prompts) ?? 0;
+  // Tool bubbles carry the id of the call that produced them; each prompt also ends in one call with no tool.
+  const requests = (num(r.modelCalls) ?? 0) + prompts;
+  const ctxCount = num(r.ctxCount) ?? 0;
+  const context = ctxCount > 0 ? (num(r.ctxSum) ?? 0) / ctxCount : num(r.contextTokens) ?? 0;
+  const inputTokens = Math.ceil((num(r.inChars) ?? 0) / CHARS_PER_TOKEN);
+  const outputTokens = Math.ceil((num(r.outChars) ?? 0) / CHARS_PER_TOKEN);
+  const cacheReadTokens = Math.round(requests * context);
+  if (requests === 0 || inputTokens + outputTokens + cacheReadTokens === 0) return [];
+  return [{
+    kind: 'usage', id: `${H}:${composerId}:estimate:${day}`, sessionId: sid(composerId), timestamp: ts, provider: 'cursor',
+    model: str(r.model) ?? str(r.composerModel) ?? 'unknown', requests,
+    inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens: 0, costSource: 'estimated',
+  }];
+}
+
 function parseJson<T>(v: unknown): T | undefined {
   if (typeof v !== 'string') return undefined;
   try {
@@ -153,5 +182,6 @@ function parseJson<T>(v: unknown): T | undefined {
 export function transformRow(raw: { table: string; row: Row }, ctx: SourceCtx): NormalizedRecord[] {
   if (raw.table === 'composer') return composer(raw.row, ctx);
   if (raw.table === 'bubble') return bubble(raw.row, ctx);
+  if (raw.table === 'estimate') return estimate(raw.row);
   return [];
 }
