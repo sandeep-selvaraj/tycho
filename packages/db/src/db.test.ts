@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { openDb, queries } from './index';
+import { migrate, openDb, queries } from './index';
 
 describe('db', () => {
   it('migrates idempotently and answers empty queries', () => {
@@ -45,6 +45,21 @@ describe('db', () => {
       'written-after-idle': true, parent: true,
     });
     expect(queries.overview(db, now).liveCount).toBe(4);
+  });
+
+  it('drops empty placeholder sessions left by earlier versions', () => {
+    const db = openDb(':memory:');
+    db.pragma('user_version = 3');
+    db.exec(`ALTER TABLE sessions DROP COLUMN activity; ALTER TABLE sessions DROP COLUMN activity_at;`);
+    const ins = db.prepare(`INSERT INTO sessions (id,harness,native_id,title,started_at,updated_at,source_ref,parent_session_id) VALUES (?, 'cursor', ?, ?, 't', 't', 'f', ?)`);
+    ins.run('blank', 'blank', null, null);
+    ins.run('titled', 'titled', 'Named but empty', null);
+    ins.run('has-message', 'has-message', null, null);
+    ins.run('has-child', 'has-child', null, null);
+    ins.run('child', 'child', null, 'has-child');
+    db.prepare(`INSERT INTO messages (id, session_id, role, timestamp, text) VALUES ('m1','has-message','user','t','hi')`).run();
+    migrate(db);
+    expect(db.prepare(`SELECT id FROM sessions ORDER BY id`).pluck().all()).toEqual(['child', 'has-child', 'has-message', 'titled']);
   });
 
   it('indexes message text in FTS', () => {

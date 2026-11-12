@@ -71,6 +71,8 @@ function toolStatus(s: unknown): 'ok' | 'error' | 'pending' | 'unknown' {
 function composer(r: Row, ctx: SourceCtx): NormalizedRecord[] {
   const id = str(r.id);
   if (!id) return [];
+  // Cursor writes a blank conversation for every chat tab it opens; one with no name and no messages is not a session.
+  if (!str(r.name) && !r.hasBubbles && (r.status == null || r.status === 'none')) return [];
   const created = iso(r.createdAt);
   const updated = iso(r.cursor);
   // Cursor's own state: `generating` while a turn runs, then completed / aborted / none.

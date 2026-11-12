@@ -31,7 +31,6 @@ describe('cursor adapter', () => {
     const { db, ing, T } = setup();
     expect(ing.backfill()).toMatchObject([{ skipped: 0 }]);
     expect(all(db, `SELECT id, title, project_path p, parent_session_id parent FROM sessions ORDER BY id`)).toEqual([
-      { id: 'cursor:c-empty', title: null, p: null, parent: null },
       { id: 'cursor:c-new', title: 'Invoice validation', p: '/Users/dev/rechnify', parent: null },
       { id: 'cursor:c-old', title: 'Old chat about caching', p: '/Users/dev/old-app', parent: null },
       { id: 'cursor:c-sub', title: 'Explore validators', p: null, parent: 'cursor:c-new' },
@@ -39,6 +38,13 @@ describe('cursor adapter', () => {
     expect(get(db, `SELECT started_at s, updated_at u FROM sessions WHERE id='cursor:c-new'`)).toEqual({
       s: new Date(T).toISOString(), u: new Date(T + 60_000).toISOString(),
     });
+  });
+
+  it('skips the blank conversation Cursor writes for every opened chat tab', () => {
+    const { db, ing } = setup();
+    ing.backfill();
+    expect(get(db, `SELECT COUNT(*) n FROM sessions WHERE id='cursor:c-empty'`)).toEqual({ n: 0 });
+    expect(queries.sessions(db, {}, new Date(0)).some((r) => r.title === '(untitled)')).toBe(false);
   });
 
   it('takes "running" from Cursor\'s own status', () => {
@@ -87,7 +93,6 @@ describe('cursor adapter', () => {
     ]);
     const rows = queries.sessions(db, {}, new Date(0));
     expect(rows.find((r) => r.id === 'cursor:c-new')).toMatchObject({ costSource: 'estimated', subagents: 1, toolErrors: 1 });
-    expect(rows.find((r) => r.id === 'cursor:c-empty')).toMatchObject({ costSource: null, costUsd: 0 });
   });
 
   it('re-reads only conversations that changed', () => {
@@ -174,7 +179,7 @@ describe('cursor workspace paths', () => {
     mkdirSync(path.join(dir, 'workspaceStorage', 'ws-native'), { recursive: true });
     writeFileSync(path.join(dir, 'workspaceStorage', 'ws-native', 'workspace.json'), JSON.stringify({ folder: pathToFileURL(native).href }));
     const h = new Database(path.join(dir, 'globalStorage', 'state.vscdb'));
-    h.prepare(`INSERT INTO cursorDiskKV VALUES ('composerData:c-native', ?)`).run(JSON.stringify({ composerId: 'c-native', createdAt: 1, lastUpdatedAt: 1, workspaceIdentifier: { id: 'ws-native' } }));
+    h.prepare(`INSERT INTO cursorDiskKV VALUES ('composerData:c-native', ?)`).run(JSON.stringify({ composerId: 'c-native', name: 'Native', createdAt: 1, lastUpdatedAt: 1, workspaceIdentifier: { id: 'ws-native' } }));
     h.close();
     const db = openDb(':memory:');
     new Ingestor(db, at(dir)).backfill();

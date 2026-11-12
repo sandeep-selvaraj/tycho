@@ -13,7 +13,8 @@ const COMPOSERS = `
     json_extract(c.value, '$.subagentComposerIds') AS subagents,
     json_extract(c.value, '$.usageData') AS usageData,
     json_extract(c.value, '$.status') AS status,
-    COALESCE(json_array_length(c.value, '$.generatingBubbleIds'), 0) AS generating
+    COALESCE(json_array_length(c.value, '$.generatingBubbleIds'), 0) AS generating,
+    EXISTS (SELECT 1 FROM cursorDiskKV b WHERE b.key >= 'bubbleId:' || substr(c.key, 14) || ':' AND b.key < 'bubbleId:' || substr(c.key, 14) || ';') AS hasBubbles
   FROM cursorDiskKV c
   WHERE c.key >= 'composerData:' AND c.key < 'composerData;' AND cursor >= @cursor`;
 
