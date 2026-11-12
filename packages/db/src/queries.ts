@@ -82,11 +82,12 @@ const SESSION_SELECT = `
                  WHEN COUNT(*)>0 THEN 'reported' END FROM usage_events WHERE session_id IN ${FAM}) costSource,
     EXISTS (SELECT 1 FROM usage_events WHERE session_id IN ${FAM} AND cost_usd IS NULL) unpriced,
     (SELECT COUNT(*) FROM sessions WHERE parent_session_id = s.id) subagents,
+    (SELECT group_concat(COALESCE(x.title, 'subagent'), char(31)) FROM sessions x WHERE x.parent_session_id = s.id AND ${IS_LIVE}) runningSubagents,
     EXISTS (SELECT 1 FROM sessions x WHERE (x.id = s.id OR x.parent_session_id = s.id) AND ${IS_LIVE}) live
   FROM sessions s`;
 
-type RawRow = Omit<SessionRow, 'live' | 'unpriced'> & { live: number; unpriced: number };
-const toRow = (r: RawRow): SessionRow => ({ ...r, live: r.live === 1, unpriced: r.unpriced === 1 });
+type RawRow = Omit<SessionRow, 'live' | 'unpriced' | 'runningSubagents'> & { live: number; unpriced: number; runningSubagents: string | null };
+const toRow = (r: RawRow): SessionRow => ({ ...r, live: r.live === 1, unpriced: r.unpriced === 1, runningSubagents: r.runningSubagents?.split('\x1f') ?? [] });
 
 export function sessions(
   db: BetterSqlite3.Database,

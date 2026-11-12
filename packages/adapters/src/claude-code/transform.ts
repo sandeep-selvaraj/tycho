@@ -135,7 +135,8 @@ export function transform(raw: unknown, ctx: SourceCtx): NormalizedRecord[] {
   // A prompt starts a turn; an interrupt ends one. Local slash commands may never reach the model, so they say nothing.
   if (text.startsWith('[Request interrupted by user')) session.activity = 'idle';
   else if (!COMMAND.test(text)) session.activity = 'running';
-  if (role === 'user' && !isSidechain) {
+  // Sidechain prompts never title a main session, but a subagent's own file is nothing else: its first prompt is its task.
+  if (role === 'user' && (!isSidechain || s.parentSessionId)) {
     if (!text.startsWith('<')) session.title = { text: text.split('\n')[0]!.slice(0, 120), rank: 1 };
     else {
       // Sessions made only of slash commands would otherwise stay untitled.

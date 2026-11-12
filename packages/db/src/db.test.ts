@@ -45,6 +45,11 @@ describe('db', () => {
       'written-after-idle': true, parent: true,
     });
     expect(queries.overview(db, now).liveCount).toBe(4);
+    // The parent's row names the subagents that are in flight.
+    add('child-done', ago(20), 'idle', ago(20), 'parent');
+    db.prepare(`UPDATE sessions SET title = 'Bugbot' WHERE id = 'child'`).run();
+    expect(queries.sessions(db, {}, now).find((r) => r.id === 'parent')).toMatchObject({ subagents: 2, runningSubagents: ['Bugbot'] });
+    expect(queries.sessions(db, {}, now).find((r) => r.id === 'long-tool')?.runningSubagents).toEqual([]);
   });
 
   it('drops empty placeholder sessions left by earlier versions', () => {

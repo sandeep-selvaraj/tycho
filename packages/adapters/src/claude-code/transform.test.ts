@@ -96,6 +96,13 @@ describe('claude-code activity and fallback titles', () => {
     expect(user('<local-command-stdout>done</local-command-stdout>')?.activity).toBeUndefined();
   });
 
+  it('titles a subagent after the task it was given, but never a main session after a sidechain prompt', () => {
+    const prompt = { type: 'user', isSidechain: true, message: { role: 'user', content: 'Find every caller of parseInvoice\nthen report' } };
+    expect(of(claudeCode.transform({ uuid: 'x', sessionId: 'sess-1', timestamp: '2026-11-01T10:00:00.000Z', ...prompt }, { file: sub, root }), 'session')[0]?.title)
+      .toEqual({ text: 'Find every caller of parseInvoice', rank: 1 });
+    expect(session(prompt)?.title).toBeUndefined();
+  });
+
   it('titles a session of only slash commands after the command', () => {
     expect(user('<command-name>/plugin</command-name>\n<command-message>plugin</command-message>\n<command-args>marketplace add x/y</command-args>')?.title)
       .toEqual({ text: '/plugin marketplace add x/y', rank: 0 });
