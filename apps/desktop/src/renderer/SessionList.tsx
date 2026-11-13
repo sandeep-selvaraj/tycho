@@ -3,6 +3,12 @@ import type { SessionDetail, SessionRow } from '@tycho/core';
 import { Tape } from './Tape';
 import { STAMP, costLabel, harness, span, tokens } from './format';
 
+/** "Bugbot, Explore validators +2": enough to tell which jobs are in flight without flooding the row. */
+function subagentNames(titles: string[]): string {
+  const shown = titles.slice(0, 2).map((t) => (t.length > 40 ? `${t.slice(0, 40)}…` : t)).join(', ');
+  return titles.length > 2 ? `${shown} +${titles.length - 2}` : shown;
+}
+
 function Strip({ s, onOpen }: { s: SessionRow; onOpen: (id: string) => void }) {
   const [open, setOpen] = useState(false);
   const [detail, setDetail] = useState<SessionDetail | null>(null);
@@ -34,6 +40,7 @@ function Strip({ s, onOpen }: { s: SessionRow; onOpen: (id: string) => void }) {
           <div className="meta">
             {s.model ?? 'unknown model'} · {span(s.startedAt, s.updatedAt)}
             {s.subagents > 0 && ` · ${s.subagents} subagent${s.subagents > 1 ? 's' : ''}`}
+            {s.runningSubagents.length > 0 && `, ${s.runningSubagents.length} running: ${subagentNames(s.runningSubagents)}`}
           </div>
         </div>
         <div className="proj"><div className="fig">{s.projectPath?.split('/').pop() ?? '—'}</div></div>

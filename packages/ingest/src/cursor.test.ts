@@ -31,7 +31,6 @@ describe('cursor adapter', () => {
     const { db, ing, T } = setup();
     expect(ing.backfill()).toMatchObject([{ skipped: 0 }]);
     expect(all(db, `SELECT id, title, project_path p, parent_session_id parent FROM sessions ORDER BY id`)).toEqual([
-      { id: 'cursor:c-empty', title: null, p: null, parent: null },
       { id: 'cursor:c-new', title: 'Invoice validation', p: '/Users/dev/rechnify', parent: null },
       { id: 'cursor:c-old', title: 'Old chat about caching', p: '/Users/dev/old-app', parent: null },
       { id: 'cursor:c-sub', title: 'Explore validators', p: null, parent: 'cursor:c-new' },
@@ -39,6 +38,52 @@ describe('cursor adapter', () => {
     expect(get(db, `SELECT started_at s, updated_at u FROM sessions WHERE id='cursor:c-new'`)).toEqual({
       s: new Date(T).toISOString(), u: new Date(T + 60_000).toISOString(),
     });
+  });
+
+  it('skips the blank conversation Cursor writes for every opened chat tab', () => {
+    const { db, ing } = setup();
+    ing.backfill();
+    expect(get(db, `SELECT COUNT(*) n FROM sessions WHERE id='cursor:c-empty'`)).toEqual({ n: 0 });
+    expect(queries.sessions(db, {}, new Date(0)).some((r) => r.title === '(untitled)')).toBe(false);
+  });
+
+  it('takes "running" from Cursor\'s own status', () => {
+    const { dir, db, ing, T } = setup();
+    ing.backfill();
+    const at = new Date(T + 150_000);
+    // Completed 90 s ago: not running, though recency alone (two minutes) would still say so.
+    expect(queries.sessions(db, {}, at).find((r) => r.id === 'cursor:c-new')?.live).toBe(false);
+    const h = new Database(path.join(dir, 'globalStorage', 'state.vscdb'));
+    const c = JSON.parse(h.prepare(`SELECT value FROM cursorDiskKV WHERE key='composerData:c-new'`).pluck().get() as string);
+    h.prepare(`UPDATE cursorDiskKV SET value = ? WHERE key='composerData:c-new'`).run(JSON.stringify({ ...c, status: 'generating', lastUpdatedAt: T + 120_000 }));
+    h.close();
+    ing.backfill();
+    // Mid-turn and quiet for five minutes (a long tool call): still running.
+    expect(queries.sessions(db, {}, new Date(T + 420_000)).find((r) => r.id === 'cursor:c-new')?.live).toBe(true);
+  });
+
+  it('estimates usage from context size and model calls when Cursor records no tokens', () => {
+    const { dir, db, ing, T } = setup();
+    const h = new Database(path.join(dir, 'globalStorage', 'state.vscdb'));
+    const kv = (k: string, v: unknown) => h.prepare(`INSERT INTO cursorDiskKV VALUES (?, ?)`).run(k, JSON.stringify(v));
+    const zero = { tokenCount: { inputTokens: 0, outputTokens: 0 } };
+    kv('composerData:c-est', { composerId: 'c-est', name: 'Estimated', createdAt: T, lastUpdatedAt: T + 5000, status: 'completed', usageData: {}, modelConfig: { modelName: 'claude-4.5-sonnet' } });
+    kv('bubbleId:c-est:b1', { ...zero, type: 1, text: 'x'.repeat(400), createdAt: new Date(T).toISOString(), contextWindowStatusAtCreation: { tokensUsed: 10_000 } });
+    kv('bubbleId:c-est:b2', { ...zero, type: 2, createdAt: new Date(T + 1000).toISOString(), toolFormerData: { toolCallId: 't1', modelCallId: 'call-a', name: 'read_file_v2', status: 'completed', rawArgs: 'a'.repeat(40), result: 'r'.repeat(4000) } });
+    kv('bubbleId:c-est:b3', { ...zero, type: 2, createdAt: new Date(T + 2000).toISOString(), toolFormerData: { toolCallId: 't2', modelCallId: 'call-a', name: 'read_file_v2', status: 'completed', rawArgs: 'a'.repeat(40), result: '' } });
+    kv('bubbleId:c-est:b4', { ...zero, type: 2, createdAt: new Date(T + 3000).toISOString(), toolFormerData: { toolCallId: 't3', modelCallId: 'call-b', name: 'read_file_v2', status: 'completed', rawArgs: '', result: '' } });
+    kv('bubbleId:c-est:b5', { ...zero, type: 2, text: 'y'.repeat(800), thinking: { text: 'z'.repeat(1200) }, createdAt: new Date(T + 4000).toISOString() });
+    h.close();
+    ing.backfill();
+    ing.backfill(); // re-reading must not add to it
+    const day = new Date(T).toISOString().slice(0, 10);
+    expect(all(db, `SELECT id, model, cost_source s, input_tokens i, output_tokens o, cache_read_tokens cr, cost_usd > 0 priced FROM usage_events WHERE session_id='cursor:c-est'`)).toEqual([
+      // 2 distinct model calls + 1 prompt = 3 requests x 10k context; (400 + 4000) / 4 in; (800 + 1200 + 80) / 4 out.
+      { id: `cursor:c-est:estimate:${day}`, model: 'claude-4.5-sonnet', s: 'estimated', i: 1100, o: 520, cr: 30_000, priced: 1 },
+    ]);
+    expect(queries.sessions(db, {}, new Date(0)).find((r) => r.id === 'cursor:c-est')).toMatchObject({ costSource: 'estimated', totalTokens: 31_620 });
+    // Conversations with recorded tokens or Cursor's own charge are left alone.
+    expect(get(db, `SELECT COUNT(*) n FROM usage_events WHERE id LIKE '%:estimate:%' AND session_id != 'cursor:c-est' AND session_id != 'cursor:c-sub'`)).toEqual({ n: 0 });
   });
 
   it('keeps bubbles in their own conversation (key ranges do not leak)', () => {
@@ -65,24 +110,64 @@ describe('cursor adapter', () => {
   it('marks every Cursor cost as estimated and never double counts', () => {
     const { db, ing } = setup();
     ing.backfill();
-    expect(all(db, `SELECT id, cost_source s, ROUND(cost_usd, 4) c, input_tokens i FROM usage_events ORDER BY id`)).toEqual([
+    expect(all(db, `SELECT id, cost_source s, ROUND(cost_usd, 4) c, input_tokens i FROM usage_events WHERE session_id != 'cursor:c-sub' ORDER BY id`)).toEqual([
       // c-old carries Cursor's own charge, so its token-bearing bubble is not counted again.
       { id: 'cursor:c-new:b5', s: 'estimated', c: expect.any(Number), i: 1200 },
       { id: 'cursor:c-old:usage:claude-4.5-sonnet-thinking', s: 'estimated', c: 0.49, i: 0 },
     ]);
     const rows = queries.sessions(db, {}, new Date(0));
     expect(rows.find((r) => r.id === 'cursor:c-new')).toMatchObject({ costSource: 'estimated', subagents: 1, toolErrors: 1 });
-    expect(rows.find((r) => r.id === 'cursor:c-empty')).toMatchObject({ costSource: null, costUsd: 0 });
   });
 
   it('re-reads only conversations that changed', () => {
     const { dir, db, ing, T } = setup();
-    ing.backfill();
+    const [first] = ing.backfill();
     appendBubble(dir, T);
     const [r] = ing.backfill();
-    expect(r!.records).toBeLessThan(20);
+    // c-new and its subagent, not c-old.
+    expect(r!.records).toBeLessThan(first!.records);
     expect(get(db, `SELECT COUNT(*) n FROM messages WHERE text = 'Also check VAT'`)).toEqual({ n: 1 });
     expect(get(db, `SELECT COUNT(*) n FROM messages WHERE session_id='cursor:c-old'`)).toEqual({ n: 1 });
+  });
+
+  it('picks up a running chat and its subagent before Cursor stamps the conversation as updated', () => {
+    const { dir, db, ing, T } = setup();
+    ing.backfill();
+    const h = new Database(path.join(dir, 'globalStorage', 'state.vscdb'));
+    const kv = (k: string, v: unknown) => h.prepare(`INSERT INTO cursorDiskKV VALUES (?, ?)`).run(k, JSON.stringify(v));
+    const at = (ms: number) => new Date(T + ms).toISOString();
+    // A newer conversation exists, so c-new is no longer the latest one; its own stamp stays at T + 60 s.
+    kv('composerData:c-later', { composerId: 'c-later', name: 'Later', createdAt: T + 100_000, lastUpdatedAt: T + 100_000, status: 'completed' });
+    kv('bubbleId:c-later:b1', { type: 1, text: 'Something else', createdAt: at(100_000) });
+    ing.backfill();
+    kv('bubbleId:c-new:b7', { type: 1, text: 'Now review the branch', createdAt: at(200_000) });
+    kv('bubbleId:c-new:b8', {
+      type: 2, createdAt: at(201_000),
+      toolFormerData: { toolCallId: 'call-task', name: 'task_v2', status: 'loading', rawArgs: '{"description":"Bugbot"}', additionalData: { status: 'running', subagentComposerId: 'c-bot' } },
+    });
+    kv('composerData:c-bot', { composerId: 'c-bot', name: 'Bugbot', createdAt: T + 201_000, status: 'none', subagentInfo: { subagentTypeName: 'bugbot' } });
+    kv('bubbleId:c-bot:b1', { type: 2, text: 'Reading the diff', createdAt: at(203_000) });
+    ing.backfill();
+    expect(get(db, `SELECT COUNT(*) n FROM messages WHERE text IN ('Now review the branch', 'Reading the diff')`)).toEqual({ n: 2 });
+    // Five quiet minutes into the subagent's run: the parent is running, and says which job is in flight.
+    const during = queries.sessions(db, {}, new Date(T + 503_000)).find((r) => r.id === 'cursor:c-new');
+    expect(during).toMatchObject({ live: true, runningSubagents: ['Bugbot'], subagents: 2 });
+
+    // The subagent finishes. Cursor leaves the call on "loading" but records the outcome next to it.
+    kv('bubbleId:c-bot:b2', { type: 2, text: 'No issues found', createdAt: at(520_000) });
+    kv('bubbleId:c-new:b8', {
+      type: 2, createdAt: at(201_000), completedAtMs: T + 521_000,
+      toolFormerData: { toolCallId: 'call-task', name: 'task_v2', status: 'loading', rawArgs: '{"description":"Bugbot"}', additionalData: { status: 'success', subagentComposerId: 'c-bot', terminationReason: 'completed' } },
+    });
+    const c = JSON.parse(h.prepare(`SELECT value FROM cursorDiskKV WHERE key='composerData:c-new'`).pluck().get() as string);
+    kv('composerData:c-new', { ...c, status: 'completed', lastUpdatedAt: T + 522_000, subagentComposerIds: ['c-sub', 'c-bot'] });
+    h.close();
+    ing.backfill();
+    const after = queries.sessions(db, {}, new Date(T + 530_000)).find((r) => r.id === 'cursor:c-new');
+    expect(after).toMatchObject({ live: false, runningSubagents: [] });
+    expect(get(db, `SELECT status FROM tool_calls WHERE id='cursor:call-task'`)).toEqual({ status: 'ok' });
+    // The subagent has no stamp of its own; it is re-read with its parent, so its usage is complete.
+    expect(get(db, `SELECT output_tokens o FROM usage_events WHERE session_id='cursor:c-bot'`)).toEqual({ o: Math.ceil(('Reading the diff'.length + 'No issues found'.length) / 4) });
   });
 
   it('never writes to the Cursor database', () => {
@@ -159,7 +244,7 @@ describe('cursor workspace paths', () => {
     mkdirSync(path.join(dir, 'workspaceStorage', 'ws-native'), { recursive: true });
     writeFileSync(path.join(dir, 'workspaceStorage', 'ws-native', 'workspace.json'), JSON.stringify({ folder: pathToFileURL(native).href }));
     const h = new Database(path.join(dir, 'globalStorage', 'state.vscdb'));
-    h.prepare(`INSERT INTO cursorDiskKV VALUES ('composerData:c-native', ?)`).run(JSON.stringify({ composerId: 'c-native', createdAt: 1, lastUpdatedAt: 1, workspaceIdentifier: { id: 'ws-native' } }));
+    h.prepare(`INSERT INTO cursorDiskKV VALUES ('composerData:c-native', ?)`).run(JSON.stringify({ composerId: 'c-native', name: 'Native', createdAt: 1, lastUpdatedAt: 1, workspaceIdentifier: { id: 'ws-native' } }));
     h.close();
     const db = openDb(':memory:');
     new Ingestor(db, at(dir)).backfill();

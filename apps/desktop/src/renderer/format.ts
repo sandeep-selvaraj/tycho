@@ -30,7 +30,7 @@ export const span = (a: string, b: string) => {
 
 /** Harnesses whose cost is never exact. Shown with an "approximate" note wherever their cost appears. */
 export const APPROXIMATE: Record<string, string> = {
-  cursor: 'Cursor cost is approximate: model calls go through Cursor, which rarely records tokens. Shown only where tokens or Cursor’s own charge exist.',
+  cursor: 'Cursor usage is an estimate: Cursor does not record token counts, so Tycho infers them from context size, the number of model calls and message lengths.',
 };
 
 /** Display a session's cost honestly: no data is not $0. */

@@ -25,13 +25,19 @@ export class Writer {
     this.clean = (s) => (s === undefined ? null : on ? redact(s) : s);
     this.s = {
       session: db.prepare(`
-        INSERT INTO sessions (id, harness, native_id, project_path, title, title_rank, started_at, updated_at, parent_session_id, source_ref)
-        VALUES (@id, @harness, @nativeId, @projectPath, @title, @titleRank, @ts, @ts, @parentSessionId, @sourceRef)
+        INSERT INTO sessions (id, harness, native_id, project_path, title, title_rank, started_at, updated_at, parent_session_id, source_ref, activity, activity_at)
+        VALUES (@id, @harness, @nativeId, @projectPath, @title, @titleRank, @ts, @ts, @parentSessionId, @sourceRef, @activity, CASE WHEN @activity IS NOT NULL THEN @ts END)
         ON CONFLICT(id) DO UPDATE SET
           project_path = COALESCE(sessions.project_path, excluded.project_path),
           parent_session_id = COALESCE(excluded.parent_session_id, sessions.parent_session_id),
-          title = CASE WHEN excluded.title_rank >= sessions.title_rank AND excluded.title IS NOT NULL THEN excluded.title ELSE sessions.title END,
-          title_rank = MAX(sessions.title_rank, excluded.title_rank),
+          -- A harness title (rank 2+) can be renamed; a first-prompt title must not be replaced by later prompts.
+          title = CASE WHEN excluded.title IS NULL THEN sessions.title
+                       WHEN sessions.title IS NULL OR excluded.title_rank > sessions.title_rank
+                         OR (excluded.title_rank = sessions.title_rank AND excluded.title_rank >= 2) THEN excluded.title
+                       ELSE sessions.title END,
+          title_rank = CASE WHEN excluded.title IS NULL THEN sessions.title_rank ELSE MAX(sessions.title_rank, excluded.title_rank) END,
+          activity = CASE WHEN excluded.activity IS NOT NULL AND excluded.activity_at >= COALESCE(sessions.activity_at, '') THEN excluded.activity ELSE sessions.activity END,
+          activity_at = CASE WHEN excluded.activity IS NOT NULL AND excluded.activity_at >= COALESCE(sessions.activity_at, '') THEN excluded.activity_at ELSE sessions.activity_at END,
           started_at = CASE WHEN excluded.started_at = '' THEN sessions.started_at WHEN sessions.started_at = '' THEN excluded.started_at ELSE MIN(sessions.started_at, excluded.started_at) END,
           updated_at = MAX(sessions.updated_at, excluded.updated_at)`),
       message: db.prepare(`
@@ -69,6 +75,17 @@ export class Writer {
     };
   }
 
+  /** Price an event; one that aggregates several requests is priced as that many average-sized requests. */
+  private cost(r: Extract<NormalizedRecord, { kind: 'usage' }>): number | undefined {
+    const n = Math.max(1, Math.round(r.requests ?? 1));
+    if (n === 1) return computeCost(r.model, r, undefined, this.aliases);
+    const one = computeCost(r.model, {
+      inputTokens: r.inputTokens / n, outputTokens: r.outputTokens / n, cacheReadTokens: r.cacheReadTokens / n,
+      cacheWriteTokens: r.cacheWriteTokens / n, cacheWrite1hTokens: (r.cacheWrite1hTokens ?? 0) / n,
+    }, undefined, this.aliases);
+    return one === undefined ? undefined : one * n;
+  }
+
   write(records: NormalizedRecord[]): WriteStats {
     let usage = 0;
     for (const r of records) {
@@ -78,6 +95,7 @@ export class Writer {
             id: r.id, harness: r.harness, nativeId: r.nativeId, projectPath: r.projectPath ?? null,
             title: r.title ? this.clean(r.title.text) : null, titleRank: r.title?.rank ?? 0, ts: r.timestamp,
             parentSessionId: r.parentSessionId ?? null, sourceRef: r.sourceRef,
+            activity: r.timestamp ? r.activity ?? null : null,
           });
           break;
         case 'message':
@@ -101,7 +119,7 @@ export class Writer {
           break;
         case 'usage': {
           const reported = r.costUsd !== undefined;
-          const cost = reported ? r.costUsd : computeCost(r.model, r, undefined, this.aliases);
+          const cost = reported ? r.costUsd : this.cost(r);
           const info = this.s.usage.run({
             id: r.id, sessionId: r.sessionId, messageId: r.messageId ?? null, timestamp: r.timestamp, provider: r.provider ?? null,
             model: r.model, inputTokens: r.inputTokens, outputTokens: r.outputTokens, cacheReadTokens: r.cacheReadTokens,

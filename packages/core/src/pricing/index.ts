@@ -16,7 +16,7 @@ export type PriceTable = Record<string, Price>;
 export const BUNDLED_PRICES = snapshot as PriceTable;
 
 const TIER = 200_000;
-const PREFIXES = ['', 'anthropic/', 'openai/', 'gemini/', 'xai/', 'openrouter/'];
+const PREFIXES = ['', 'anthropic/', 'openai/', 'gemini/', 'xai/', 'meta/', 'openrouter/'];
 
 /**
  * Resolve a harness model id to a price-table key.

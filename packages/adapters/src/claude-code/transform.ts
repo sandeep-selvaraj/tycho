@@ -26,7 +26,7 @@ type Line = {
   requestId?: string;
   aiTitle?: string;
   customTitle?: string;
-  message?: { id?: string; role?: string; model?: string; content?: string | Block[]; usage?: Usage };
+  message?: { id?: string; role?: string; model?: string; content?: string | Block[]; usage?: Usage; stop_reason?: string | null };
 };
 
 /** Session identity comes from the path: subagent files become children of their parent session. */
@@ -50,6 +50,17 @@ function flattenContent(c: unknown): string {
   if (typeof c === 'string') return c;
   if (Array.isArray(c)) return c.map((b: Block) => (b?.type === 'text' ? b.text ?? '' : b?.type ? `[${b.type}]` : '')).join('\n');
   return '';
+}
+
+/** Slash commands and their local output are stored as user lines wrapped in these tags. */
+const COMMAND = /^<(command-name|command-message|local-command-)/;
+
+/** `<command-name>/plugin</command-name> … <command-args>add x</command-args>` → `/plugin add x`. */
+function commandTitle(text: string): string | undefined {
+  const name = /<command-name>\s*([^<]+?)\s*<\/command-name>/.exec(text)?.[1];
+  if (!name) return undefined;
+  const args = /<command-args>\s*([^<]*?)\s*<\/command-args>/.exec(text)?.[1];
+  return `${name}${args ? ` ${args}` : ''}`.slice(0, 120);
 }
 
 function clip(s: string): string {
@@ -82,6 +93,9 @@ export function transform(raw: unknown, ctx: SourceCtx): NormalizedRecord[] {
   if (l.type === 'assistant') {
     const m = l.message;
     const text = blocks.filter((b) => b.type === 'text').map((b) => b.text ?? '').join('\n');
+    // Every line of one API response repeats its stop reason: `tool_use` means the turn goes on,
+    // anything else (end_turn, max_tokens, a synthetic error message) hands control back to the user.
+    if (m.stop_reason) session.activity = m.stop_reason === 'tool_use' || m.stop_reason === 'pause_turn' ? 'running' : 'idle';
     out.push({ kind: 'message', id: l.uuid, sessionId: s.id, role: 'assistant', timestamp: ts, model: m.model, text: text || undefined, isSidechain });
     for (const b of blocks) {
       if (b.type !== 'tool_use' || !b.id || !b.name) continue;
@@ -110,14 +124,25 @@ export function transform(raw: unknown, ctx: SourceCtx): NormalizedRecord[] {
     out.push({ kind: 'tool_result', id: b.tool_use_id, sessionId: s.id, status: b.is_error ? 'error' : 'ok', output: clip(flattenContent(b.content)), endedAt: ts });
   }
   const onlyToolResults = blocks.length > 0 && blocks.every((b) => b.type === 'tool_result');
+  // A tool result goes straight back to the model, so the turn is still in progress.
+  if (onlyToolResults) session.activity = 'running';
   if (onlyToolResults || l.isMeta) return out;
 
   const text = flattenContent(l.message.content);
   if (!text) return out;
   const role = l.isCompactSummary ? 'system' : 'user';
   out.push({ kind: 'message', id: l.uuid, sessionId: s.id, role, timestamp: ts, text, isSidechain });
-  if (role === 'user' && !isSidechain && !text.startsWith('<')) {
-    session.title = { text: text.split('\n')[0]!.slice(0, 120), rank: 1 };
+  // A prompt starts a turn; an interrupt ends one. Local slash commands may never reach the model, so they say nothing.
+  if (text.startsWith('[Request interrupted by user')) session.activity = 'idle';
+  else if (!COMMAND.test(text)) session.activity = 'running';
+  // Sidechain prompts never title a main session, but a subagent's own file is nothing else: its first prompt is its task.
+  if (role === 'user' && (!isSidechain || s.parentSessionId)) {
+    if (!text.startsWith('<')) session.title = { text: text.split('\n')[0]!.slice(0, 120), rank: 1 };
+    else {
+      // Sessions made only of slash commands would otherwise stay untitled.
+      const cmd = commandTitle(text);
+      if (cmd) session.title = { text: cmd, rank: 0 };
+    }
   }
   return out;
 }

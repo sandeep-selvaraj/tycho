@@ -16,6 +16,8 @@ export interface SessionRow {
   costSource: CostSource | null;
   live: boolean;
   subagents: number;
+  /** Titles of subagents that are running right now (a subset of `subagents`). */
+  runningSubagents: string[];
   /** True when some usage has no known price, so costUsd is a lower bound. */
   unpriced: boolean;
 }
