@@ -1,6 +1,6 @@
 export const usd = (n: number) => `$${n.toFixed(2)}`;
 export const tokens = (n: number) =>
-  n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${Math.round(n / 1e3)}k` : String(n);
+  n >= 1e9 ? `${(n / 1e9).toFixed(2)}B` : n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${Math.round(n / 1e3)}k` : String(n);
 
 export const HARNESS: Record<string, { label: string; color: string }> = {
   'claude-code': { label: 'Claude', color: 'var(--claude)' },

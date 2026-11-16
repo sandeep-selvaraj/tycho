@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
+import type { AppInfo, UpdateCheck } from '@tycho/core';
 import { useTycho } from './useQuery';
 import { HARNESS, usd } from './format';
 import { Overview, Sessions, Sources } from './views';
@@ -6,11 +7,20 @@ import { Transcript } from './Transcript';
 import { ErrorBoundary } from './ErrorBoundary';
 import { Tools } from './Tools';
 import { Search } from './Search';
+import { Costs } from './Costs';
+import { Settings } from './Settings';
 import { Mark } from './Mark';
 import { Wordmark } from './Wordmark';
 
-const VIEWS = ['Overview', 'Sessions', 'Tools', 'Search', 'Sources'] as const;
-type View = (typeof VIEWS)[number];
+const VIEWS = ['Overview', 'Sessions', 'Costs', 'Tools', 'Search', 'Sources'] as const;
+type View = (typeof VIEWS)[number] | 'Settings';
+
+const Gear = () => (
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <circle cx="12" cy="12" r="3" />
+    <path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-2.9 1.2V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-2.9-1.2l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0-1.2-2.9H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.2-2.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 2.9-1.2V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 2.9 1.2l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0 1.2 2.9h.1a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z" />
+  </svg>
+);
 
 export function App() {
   const [view, setView] = useState<View>('Overview');
@@ -23,6 +33,22 @@ export function App() {
   const { data: ov } = useTycho(() => window.tycho.overview());
   const { data: sources = [] } = useTycho(() => window.tycho.sources());
   const issues = sources.filter((s) => s.health !== 'ok').length;
+
+  const [info, setInfo] = useState<AppInfo>();
+  const [check, setCheck] = useState<UpdateCheck>();
+  const [checking, setChecking] = useState(false);
+  const runCheck = useCallback(() => {
+    setChecking(true);
+    void window.tycho.checkForUpdates().then(setCheck).finally(() => setChecking(false));
+  }, []);
+  useEffect(() => {
+    void window.tycho.appInfo().then((i) => {
+      setInfo(i);
+      // Only when the user has asked for it; otherwise nothing is sent until they press the button.
+      if (i.settings.checkUpdatesOnLaunch) runCheck();
+    });
+  }, [runCheck]);
+  const updateReady = Boolean(check?.available);
 
   return (
     <div className="app">
@@ -52,6 +78,10 @@ export function App() {
           ))}
           <span style={{ marginTop: 8 }}><b>R</b> reported · <b>C</b> computed · <b>E</b> estimated</span>
         </div>
+        <button className="nav-foot" aria-current={view === 'Settings' && !openId} onClick={() => go('Settings')}>
+          <span className="with-icon"><Gear />Settings</span>
+          {updateReady ? <small className="new">Update available</small> : info ? <small>v{info.version}</small> : null}
+        </button>
       </nav>
 
       <main>
@@ -61,8 +91,19 @@ export function App() {
           {!openId && view === 'Overview' && <Overview onOpen={setOpenId} />}
           {!openId && view === 'Sessions' && <Sessions onOpen={setOpenId} />}
           {!openId && view === 'Sources' && <Sources />}
+          {/* Stays mounted behind an open session, so coming back lands on the same period. */}
+          {view === 'Costs' && <div hidden={!!openId}><Costs onOpen={setOpenId} /></div>}
           {!openId && view === 'Tools' && <Tools />}
           {!openId && view === 'Search' && <Search onOpen={setOpenId} />}
+          {!openId && view === 'Settings' && (
+            <Settings
+              info={info}
+              check={check}
+              checking={checking}
+              onCheck={runCheck}
+              onSettings={(next) => void window.tycho.setSettings(next).then((saved) => setInfo((i) => i && { ...i, settings: saved }))}
+            />
+          )}
           </ErrorBoundary>
         </section>
       </main>
