@@ -46,6 +46,7 @@ Tycho is a desktop app that reads the session history your coding agents already
 | **Tools** | Each tool by harness: call count, error rate, average and p90 duration. Sortable, and filterable by time range. |
 | **Search** | Full-text search across every message from every harness, with highlighted matches. |
 | **Sources** | Every file or database Tycho reads, with its health, last ingest time and record count. |
+| **Settings** | The version you are running, what changed in it, and a button that checks whether a newer release is available. On macOS it can install the update and restart. |
 | **Menu bar / tray** | Today's cost at a glance and the sessions running now. Click one to open it. |
 
 ## Supported harnesses
@@ -196,14 +197,27 @@ Every cost carries a stamp showing where it came from:
 
 ## Privacy and security
 
-- **Nothing leaves your machine.** Tycho makes no network requests at runtime. The price table is bundled, and refreshing it (`npm run prices`) is a manual build-time step.
+- **Nothing leaves your machine.** Your sessions, prompts and costs are never sent anywhere. The price table is bundled, and refreshing it (`npm run prices`) is a manual build-time step.
+- **Network access only for updates.** *Settings → Check for updates* asks GitHub's public API for the latest Tycho release, and sends nothing else. It runs only when you press the button, unless you turn on checking at startup, which is off by default. Installing an update downloads that release from GitHub, and only when you ask for it.
 - **Secrets are redacted before storage and search indexing.** Known key formats (Anthropic, OpenAI, GitHub, AWS, Slack, Google, Stripe), JWTs, `Bearer` tokens, `KEY=value` / `password: …` assignments, passwords in connection URLs, and private keys are masked, e.g. `AKIA…[redacted]`. Redaction is pattern-based, so treat the database as sensitive anyway.
 - **Harness data is never modified.** SQLite sources open read-only, falling back to a temporary snapshot copy if the file is locked. A test checks that a harness database's `data_version` is unchanged after ingestion.
 - **The UI is sandboxed.** The window runs with `contextIsolation`, `sandbox` and no Node integration, under a strict Content-Security-Policy. It can only call a small typed API, and every request is validated in the main process.
 
+## Releasing
+
+Release notes live in [`CHANGELOG.md`](CHANGELOG.md). Describe each user-visible change under `Unreleased` as you build it, with a screenshot if it helps. Then:
+
+```bash
+npm run release -- 0.2.0
+```
+
+That turns `Unreleased` into the `0.2.0` section, bumps the app version, commits and tags `v0.2.0`. Pushing the tag builds the installers and drafts a GitHub Release whose notes are that changelog section; a tag with no changelog entry fails the build. Publish the draft once you have checked it: the in-app update check only sees published releases. The same notes are compiled into the app and shown under *Settings → What's new*.
+
+On macOS, *Settings → Install and restart* downloads the new release's zip, checks it against the release's `SHA256SUMS.txt`, replaces the installed app once Tycho has quit, and reopens it. The builds aren't signed, so that checksum, fetched from the same GitHub Release, is the only verification. On Windows and Linux the button opens the download page instead.
+
 ## Roadmap
 
-- Signed and notarized releases, with prebuilt downloads for macOS, Windows and Linux
+- Signed and notarized releases, so macOS opens Tycho without the first-launch warning
 - Verified Windows and Linux builds
 - An in-app price refresh, and recalculating stored costs after a refresh
 - More harnesses: Gemini CLI, Aider, Copilot

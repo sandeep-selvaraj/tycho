@@ -11,6 +11,16 @@ const api: TychoApi = {
   search: (q) => ipcRenderer.invoke(IPC.search, q),
   costPeriods: (q) => ipcRenderer.invoke(IPC.costPeriods, q),
   costSessions: (q) => ipcRenderer.invoke(IPC.costSessions, q),
+  appInfo: () => ipcRenderer.invoke(IPC.appInfo),
+  setSettings: (s) => ipcRenderer.invoke(IPC.setSettings, s),
+  checkForUpdates: () => ipcRenderer.invoke(IPC.checkForUpdates),
+  openUpdate: () => ipcRenderer.invoke(IPC.openUpdate),
+  installUpdate: () => ipcRenderer.invoke(IPC.installUpdate),
+  onUpdateProgress: (cb) => {
+    const listener = (_e: unknown, p: Parameters<typeof cb>[0]) => cb(p);
+    ipcRenderer.on(IPC.updateProgress, listener);
+    return () => ipcRenderer.off(IPC.updateProgress, listener);
+  },
   onChange: (cb) => {
     const listener = (_e: unknown, topic: Parameters<typeof cb>[0]) => cb(topic);
     ipcRenderer.on(IPC.change, listener);
