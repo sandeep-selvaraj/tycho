@@ -8,7 +8,7 @@ This file is the single source for release notes: the GitHub Release for a versi
 Screenshots are welcome (`![Costs view](docs/releases/costs.png)`): they appear on the GitHub
 Release, and the app shows the text.
 
-## Unreleased
+## 0.2.0 - 2026-11-16
 
 - **Costs view.** See cost by day, month or year, and pick any period to list the sessions that spent something in it, how much each spent, and its share of the total.
 - **Activity graph.** A year of days at the top of Costs, one square each: brighter for more spend, coloured by harness, and blended on days that used several. Click a square to open that day.
