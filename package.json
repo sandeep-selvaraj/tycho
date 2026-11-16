@@ -11,6 +11,8 @@
     "test": "vitest run",
     "prices": "node scripts/update-prices.mjs",
     "ingest:check": "npx tsx scripts/ingest-check.ts",
+    "release": "node scripts/release.mjs",
+    "release:notes": "node scripts/release-notes.mjs",
     "package": "npm run package -w @tycho/desktop",
     "make": "npm run make -w @tycho/desktop",
     "icons": "sh scripts/build-icons.sh"
