@@ -73,4 +73,35 @@ describe('db', () => {
     const hit = db.prepare(`SELECT rowid FROM messages_fts WHERE messages_fts MATCH 'migration'`).all();
     expect(hit).toHaveLength(1);
   });
+
+  it('breaks cost down by day, month and year, and names the sessions behind a period', () => {
+    const db = openDb(':memory:');
+    const session = db.prepare(`INSERT INTO sessions (id,harness,native_id,title,started_at,updated_at,source_ref,parent_session_id) VALUES (?, ?, ?, ?, 't', 't', 'f', ?)`);
+    session.run('claude-code:a', 'claude-code', 'a', 'Refactor', null);
+    session.run('claude-code:a/agent-1', 'claude-code', 'a1', 'Explore', 'claude-code:a');
+    session.run('cursor:b', 'cursor', 'b', 'Fix build', null);
+    const usage = db.prepare(`INSERT INTO usage_events (id, session_id, timestamp, provider, model, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, cost_usd, cost_source) VALUES (?, ?, ?, 'p', ?, 100, 0, 0, 0, ?, ?)`);
+    // Local noon, so the calendar day is the same in every time zone the tests run in.
+    const at = (y: number, m: number, d: number) => new Date(y, m - 1, d, 12).toISOString();
+    usage.run('u1', 'claude-code:a', at(2026, 11, 16), 'opus', 3, 'computed');
+    usage.run('u2', 'claude-code:a/agent-1', at(2026, 11, 16), 'haiku', 1, 'computed');
+    usage.run('u3', 'cursor:b', at(2026, 11, 16), 'gpt', 0.5, 'estimated');
+    usage.run('u4', 'claude-code:a', at(2026, 11, 2), 'opus', 10, 'computed');
+    usage.run('u5', 'cursor:b', at(2025, 12, 31), 'gpt', 7, 'estimated');
+
+    expect(queries.costPeriods(db, { by: 'day' }).map((p) => [p.period, p.costUsd, p.sessions, p.estimated])).toEqual([
+      ['2026-11-16', 4.5, 2, true], ['2026-11-02', 10, 1, false], ['2025-12-31', 7, 1, true],
+    ]);
+    expect(queries.costPeriods(db, { by: 'day' })[0]!.byHarness).toEqual([{ harness: 'claude-code', costUsd: 4 }, { harness: 'cursor', costUsd: 0.5 }]);
+    expect(queries.costPeriods(db, { by: 'month' }).map((p) => [p.period, p.costUsd])).toEqual([['2026-11', 14.5], ['2025-12', 7]]);
+    expect(queries.costPeriods(db, { by: 'year', harness: 'cursor' }).map((p) => [p.period, p.costUsd])).toEqual([['2026', 0.5], ['2025', 7]]);
+
+    // A subagent's spend counts toward the chat that launched it, and only what fell inside the period counts.
+    expect(queries.costSessions(db, { by: 'day', period: '2026-11-16' }).map((r) => [r.id, r.costUsd, r.costSource, r.models])).toEqual([
+      ['claude-code:a', 4, 'computed', ['opus', 'haiku']], ['cursor:b', 0.5, 'estimated', ['gpt']],
+    ]);
+    expect(queries.costSessions(db, { by: 'month', period: '2026-11' })[0]).toMatchObject({ id: 'claude-code:a', costUsd: 14, tokens: 300 });
+    expect(queries.costSessions(db, { by: 'year', period: '2025' }).map((r) => r.id)).toEqual(['cursor:b']);
+    expect(queries.costSessions(db, { by: 'day', period: '2026-11' })).toEqual([]);
+  });
 });

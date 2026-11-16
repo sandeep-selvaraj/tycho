@@ -73,6 +73,44 @@ export interface HarnessStat {
   costPerSession: number;
 }
 
+export type CostGranularity = 'day' | 'month' | 'year';
+
+/** One calendar day, month or year (local time) and what it cost. */
+export interface CostPeriod {
+  /** `2026-11-16`, `2026-11` or `2026`, matching the granularity asked for. */
+  period: string;
+  costUsd: number;
+  tokens: number;
+  /** Top-level sessions with usage in this period. */
+  sessions: number;
+  byHarness: { harness: string; costUsd: number }[];
+  /** Part of the cost is an estimate, so the total is approximate. */
+  estimated: boolean;
+  /** Some usage has no known price, so costUsd is a lower bound. */
+  unpriced: boolean;
+}
+
+/** What one session (subagents rolled in) spent inside a single period, not over its whole life. */
+export interface CostSession {
+  id: string;
+  harness: string;
+  title: string;
+  projectPath: string | null;
+  models: string[];
+  costUsd: number;
+  tokens: number;
+  costSource: CostSource;
+  unpriced: boolean;
+  /** First and last usage inside the period. */
+  firstAt: string;
+  lastAt: string;
+}
+
+export interface CostQuery {
+  by: CostGranularity;
+  harness?: string;
+}
+
 export interface SearchHit {
   messageId: string;
   sessionId: string;
@@ -102,6 +140,10 @@ export interface TychoApi {
   tools(q: { harness?: string; days?: number }): Promise<ToolStat[]>;
   harnesses(q: { days?: number }): Promise<HarnessStat[]>;
   search(q: SearchQuery): Promise<SearchHit[]>;
+  /** Cost per day, month or year, newest first. */
+  costPeriods(q: CostQuery): Promise<CostPeriod[]>;
+  /** The sessions behind one period's cost, most expensive first. */
+  costSessions(q: CostQuery & { period: string }): Promise<CostSession[]>;
   onChange(cb: (topic: 'usage' | 'sessions' | 'sources') => void): () => void;
   /** Main asks the UI to show a session (e.g. picked from the tray). */
   onOpenSession(cb: (id: string) => void): () => void;
@@ -115,6 +157,8 @@ export const IPC = {
   tools: 'tycho:tools',
   harnesses: 'tycho:harnesses',
   search: 'tycho:search',
+  costPeriods: 'tycho:cost-periods',
+  costSessions: 'tycho:cost-sessions',
   change: 'tycho:change',
   openSession: 'tycho:open-session',
 } as const;

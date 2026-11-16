@@ -9,6 +9,8 @@ const api: TychoApi = {
   tools: (q) => ipcRenderer.invoke(IPC.tools, q),
   harnesses: (q) => ipcRenderer.invoke(IPC.harnesses, q),
   search: (q) => ipcRenderer.invoke(IPC.search, q),
+  costPeriods: (q) => ipcRenderer.invoke(IPC.costPeriods, q),
+  costSessions: (q) => ipcRenderer.invoke(IPC.costSessions, q),
   onChange: (cb) => {
     const listener = (_e: unknown, topic: Parameters<typeof cb>[0]) => cb(topic);
     ipcRenderer.on(IPC.change, listener);

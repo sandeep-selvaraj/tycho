@@ -6,10 +6,11 @@ import { Transcript } from './Transcript';
 import { ErrorBoundary } from './ErrorBoundary';
 import { Tools } from './Tools';
 import { Search } from './Search';
+import { Costs } from './Costs';
 import { Mark } from './Mark';
 import { Wordmark } from './Wordmark';
 
-const VIEWS = ['Overview', 'Sessions', 'Tools', 'Search', 'Sources'] as const;
+const VIEWS = ['Overview', 'Sessions', 'Costs', 'Tools', 'Search', 'Sources'] as const;
 type View = (typeof VIEWS)[number];
 
 export function App() {
@@ -61,6 +62,8 @@ export function App() {
           {!openId && view === 'Overview' && <Overview onOpen={setOpenId} />}
           {!openId && view === 'Sessions' && <Sessions onOpen={setOpenId} />}
           {!openId && view === 'Sources' && <Sources />}
+          {/* Stays mounted behind an open session, so coming back lands on the same period. */}
+          {view === 'Costs' && <div hidden={!!openId}><Costs onOpen={setOpenId} /></div>}
           {!openId && view === 'Tools' && <Tools />}
           {!openId && view === 'Search' && <Search onOpen={setOpenId} />}
           </ErrorBoundary>

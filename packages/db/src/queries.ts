@@ -1,5 +1,5 @@
 import type BetterSqlite3 from 'better-sqlite3';
-import type { HarnessStat, OverviewData, SearchHit, SearchQuery, SessionDetail, SessionRow, SourceRow, ToolStat } from '@tycho/core';
+import type { CostGranularity, CostPeriod, CostQuery, CostSession, HarnessStat, OverviewData, SearchHit, SearchQuery, SessionDetail, SessionRow, SourceRow, ToolStat } from '@tycho/core';
 
 /** With no word from the harness, a session counts as running while it was written to this recently. */
 const LIVE_WINDOW_MS = 2 * 60 * 1000;
@@ -210,4 +210,70 @@ export function search(db: BetterSqlite3.Database, q: SearchQuery, now = new Dat
        ORDER BY bm25(messages_fts) LIMIT @limit`,
     )
     .all({ match, since: since(q.days, now), harness: q.harness ?? null, limit: Math.min(q.limit ?? 50, 200) }) as SearchHit[];
+}
+
+const PERIOD_FORMAT: Record<CostGranularity, string> = { day: '%Y-%m-%d', month: '%Y-%m', year: '%Y' };
+/** Days are capped so years of history stay a short list; months and years never get that long. */
+const MAX_PERIODS = 400;
+// Usage belongs to the top-level session, so a subagent's spend shows under the chat that launched it.
+const USAGE_BY_TOP = `FROM usage_events u JOIN sessions s ON s.id = u.session_id JOIN sessions top ON top.id = COALESCE(s.parent_session_id, s.id)`;
+const TOKENS = 'u.input_tokens + u.output_tokens + u.cache_read_tokens + u.cache_write_tokens';
+
+/** Cost per calendar day, month or year in local time, newest first. */
+export function costPeriods(db: BetterSqlite3.Database, q: CostQuery): CostPeriod[] {
+  const rows = db
+    .prepare(
+      `SELECT strftime(@format, u.timestamp, 'localtime') period, top.harness harness, COALESCE(SUM(u.cost_usd),0) costUsd,
+         SUM(${TOKENS}) tokens, COUNT(DISTINCT top.id) sessions,
+         MAX(u.cost_source = 'estimated' AND u.cost_usd > 0) estimated, MAX(u.cost_usd IS NULL) unpriced
+       ${USAGE_BY_TOP}
+       WHERE (@harness IS NULL OR top.harness = @harness)
+       GROUP BY period, top.harness ORDER BY period DESC, costUsd DESC`,
+    )
+    .all({ format: PERIOD_FORMAT[q.by], harness: q.harness ?? null }) as { period: string | null; harness: string; costUsd: number; tokens: number; sessions: number; estimated: number; unpriced: number }[];
+  const out: CostPeriod[] = [];
+  for (const r of rows) {
+    if (r.period === null) continue;
+    let p = out[out.length - 1];
+    if (p?.period !== r.period) {
+      if (out.length === MAX_PERIODS) break;
+      p = { period: r.period, costUsd: 0, tokens: 0, sessions: 0, byHarness: [], estimated: false, unpriced: false };
+      out.push(p);
+    }
+    p.costUsd += r.costUsd;
+    p.tokens += r.tokens;
+    p.sessions += r.sessions;
+    p.byHarness.push({ harness: r.harness, costUsd: r.costUsd });
+    p.estimated ||= r.estimated === 1;
+    p.unpriced ||= r.unpriced === 1;
+  }
+  return out;
+}
+
+/** Local-time bounds of a period key, as [start, end) UTC timestamps. */
+function periodRange(by: CostGranularity, period: string): [string, string] | null {
+  const m = { day: /^(\d{4})-(\d{2})-(\d{2})$/, month: /^(\d{4})-(\d{2})$/, year: /^(\d{4})$/ }[by].exec(period);
+  if (!m) return null;
+  const [y, mo = 1, d = 1] = m.slice(1).map(Number) as [number, number?, number?];
+  const start = new Date(y, mo - 1, d);
+  const end = by === 'day' ? new Date(y, mo - 1, d + 1) : by === 'month' ? new Date(y, mo, 1) : new Date(y + 1, 0, 1);
+  return [start.toISOString(), end.toISOString()];
+}
+
+/** The sessions that spent something in one period, with what each spent inside it. */
+export function costSessions(db: BetterSqlite3.Database, q: CostQuery & { period: string }): CostSession[] {
+  const range = periodRange(q.by, q.period);
+  if (!range) return [];
+  const rows = db
+    .prepare(
+      `SELECT top.id, top.harness, COALESCE(top.title, '(untitled)') title, top.project_path projectPath,
+         group_concat(DISTINCT u.model) models, COALESCE(SUM(u.cost_usd),0) costUsd, SUM(${TOKENS}) tokens,
+         CASE WHEN SUM(u.cost_source='estimated')>0 THEN 'estimated' WHEN SUM(u.cost_source='computed')>0 THEN 'computed' ELSE 'reported' END costSource,
+         MAX(u.cost_usd IS NULL) unpriced, MIN(u.timestamp) firstAt, MAX(u.timestamp) lastAt
+       ${USAGE_BY_TOP}
+       WHERE u.timestamp >= @start AND u.timestamp < @end AND (@harness IS NULL OR top.harness = @harness)
+       GROUP BY top.id ORDER BY costUsd DESC, tokens DESC LIMIT 500`,
+    )
+    .all({ start: range[0], end: range[1], harness: q.harness ?? null }) as (Omit<CostSession, 'models' | 'unpriced'> & { models: string | null; unpriced: number })[];
+  return rows.map((r) => ({ ...r, models: r.models?.split(',') ?? [], unpriced: r.unpriced === 1 }));
 }

@@ -42,6 +42,7 @@ Tycho is a desktop app that reads the session history your coding agents already
 | **Overview** | Cost for today, 7 days and 30 days. Running sessions. A 14-day cost chart stacked by harness. Cost by model, cache-read share, and a side-by-side comparison of harnesses (cost per session, tokens, tool error rate). |
 | **Sessions** | Every session across harnesses, newest first, filterable by harness. Click a row to unfold a timeline of its tool calls and per-turn token bars. |
 | **Session detail** | The full transcript (subagent messages indented), cost, tokens, model, and the tool-call timeline. |
+| **Costs** | A year-long activity graph, one square per day: brighter for more spend, coloured by harness and blended when several were used. Cost by day, month or year, per harness. Pick a period to see every session that spent something in it, how much, and its share of the total. |
 | **Tools** | Each tool by harness: call count, error rate, average and p90 duration. Sortable, and filterable by time range. |
 | **Search** | Full-text search across every message from every harness, with highlighted matches. |
 | **Sources** | Every file or database Tycho reads, with its health, last ingest time and record count. |
